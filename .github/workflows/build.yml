@@ -1,4 +1,4 @@
-: Build EntityCore
+name: Build EntityCore
 
 on:
   push:
