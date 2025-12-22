@@ -1,0 +1,4 @@
+movement:
+  admin-threshold-multiplier: 2.0
+  bedrock-leniency: true
+  silent-log: true
