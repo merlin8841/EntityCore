@@ -1,0 +1,12 @@
+logging:
+  silent: true
+
+bedrock:
+  violation-multiplier: 0.4
+  ignore-ghost-blocks: true
+
+admin:
+  ignore-movement-checks: true
+
+elytra:
+  grace-ticks: 10
