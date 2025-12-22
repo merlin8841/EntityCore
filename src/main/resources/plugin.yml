@@ -1,0 +1,6 @@
+name: EntityCore
+version: 1.0.0
+main: com.entitymc.entitycore.EntityCore
+api-version: 1.20
+author: EntityMC
+description: Core plugin for EntityMC server systems
