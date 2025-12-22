@@ -1,0 +1,2 @@
+# EntityCore
+Core of EntityMc
