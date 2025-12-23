@@ -16,15 +16,19 @@ public final class EntityCore extends JavaPlugin {
         return moduleManager;
     }
 
-    @Override
-    public void onEnable() {
-        instance = this;
+  @Override
+public void onEnable() {
+    instance = this;
 
-        moduleManager = new ModuleManager(this);
-        moduleManager.loadModules();
+    moduleManager = new ModuleManager(this);
 
-        getLogger().info("EntityCore enabled");
-    }
+    // REGISTER MODULES HERE
+    moduleManager.register(new com.entitycore.modules.hoppers.HopperFiltersModule());
+
+    moduleManager.loadModules();
+
+    getLogger().info("EntityCore enabled");
+}
 
     @Override
     public void onDisable() {
