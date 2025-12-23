@@ -1,38 +1,31 @@
 package com.entitycore;
 
-import com.entitycore.module.ModuleManager;
+import com.entitycore.modules.ModuleManager;
+import com.entitycore.modules.hoppers.HopperFiltersModule;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class EntityCore extends JavaPlugin {
 
-    private static EntityCore instance;
     private ModuleManager moduleManager;
 
-    public static EntityCore get() {
-        return instance;
+    @Override
+    public void onEnable() {
+        // If you already construct moduleManager elsewhere, keep your way.
+        // This is a safe, standard initialization.
+        if (this.moduleManager == null) {
+            this.moduleManager = new ModuleManager(this);
+        }
+
+        // IMPORTANT FIX: HopperFiltersModule requires JavaPlugin in constructor
+        moduleManager.register(new HopperFiltersModule(this));
     }
-
-    public ModuleManager getModuleManager() {
-        return moduleManager;
-    }
-
-  @Override
-public void onEnable() {
-    instance = this;
-
-    moduleManager = new ModuleManager(this);
-
-    // REGISTER MODULES HERE
-    moduleManager.register(new com.entitycore.modules.hoppers.HopperFiltersModule());
-
-    moduleManager.loadModules();
-
-    getLogger().info("EntityCore enabled");
-}
 
     @Override
     public void onDisable() {
-        moduleManager.disableModules();
-        getLogger().info("EntityCore disabled");
+        // If your ModuleManager has a disable-all, call it here.
+        // Keeping this safe even if you don't have it.
+        if (this.moduleManager != null) {
+            this.moduleManager.disableAll();
+        }
     }
 }
