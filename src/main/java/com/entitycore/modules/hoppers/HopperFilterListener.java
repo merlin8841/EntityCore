@@ -1,7 +1,8 @@
 package com.entitycore.modules.hoppers;
 
+import org.bukkit.Bukkit;
+import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
@@ -14,7 +15,9 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.inventory.*;
+import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -22,257 +25,235 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
 
-public final class HopperFilterListener implements Listener {
+public final class HopperFiltersListener implements Listener {
 
     private final JavaPlugin plugin;
 
-    public HopperFilterListener(JavaPlugin plugin) {
+    private static final int[] TEMPLATE_SLOTS = {0,1,2,3,4};
+    private static final int SLOT_TOGGLE = 22;
+    private static final int SLOT_CLOSE  = 26;
+
+    private static final String GUI_TITLE = ChatColor.DARK_GREEN + "Hopper Filter";
+
+    public HopperFiltersListener(JavaPlugin plugin) {
         this.plugin = plugin;
     }
 
-    // -------------------------
-    // CLICK / TOUCH LOCKING (Cross-play)
-    // -------------------------
+    boolean isHopperBlock(Block b) {
+        return b != null && b.getType() == Material.HOPPER;
+    }
 
+    // Sneak-tap hopper => open filter GUI (cross-play safe)
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onHopperClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
+    public void onSneakInteract(PlayerInteractEvent event) {
+        if (event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        Player p = event.getPlayer();
+        if (!p.isSneaking()) return;
+
+        Block clicked = event.getClickedBlock();
+        if (!isHopperBlock(clicked)) return;
+
+        if (!p.hasPermission(HopperFiltersCommand.PERM_USE)) {
+            p.sendMessage(ChatColor.RED + "You don't have permission.");
+            return;
+        }
+
+        event.setCancelled(true);
+        openFilterGui(p, clicked);
+    }
+
+    // If filter is enabled, prevent using hopper inventory as storage/bypass
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onVanillaHopperClickWhenEnabled(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player p)) return;
         if (event.getView().getTopInventory().getType() != InventoryType.HOPPER) return;
 
         Inventory top = event.getView().getTopInventory();
         InventoryHolder holder = top.getHolder();
         if (!(holder instanceof Hopper hopperState)) return;
 
-        // Only handle clicks within top hopper inventory slots 0..4
-        int raw = event.getRawSlot();
-        if (raw < 0 || raw > 4) return;
-
         Block hopperBlock = hopperState.getBlock();
-        Optional<TileState> tsOpt = HopperFilterStorage.getTileState(hopperBlock);
+        Optional<TileState> tsOpt = HopperFilterStorage.getTile(hopperBlock);
         if (tsOpt.isEmpty()) return;
 
         TileState ts = tsOpt.get();
-        int mask = HopperFilterStorage.getLockMask(ts);
+        if (!HopperFilterStorage.isEnabled(ts)) return;
 
-        boolean slotLocked = HopperFilterStorage.isLocked(mask, raw);
-        ItemStack slotItem = top.getItem(raw);
-        ItemStack cursor = event.getCursor();
-        ItemStack hand = player.getInventory().getItemInMainHand();
-
-        boolean cursorEmpty = (cursor == null || cursor.getType() == Material.AIR);
-        boolean handEmpty = (hand == null || hand.getType() == Material.AIR);
-        boolean slotEmpty = (slotItem == null || slotItem.getType() == Material.AIR);
-
-        boolean filterMode = (mask != 0);
-
-        // -------------------------
-        // VANILLA MODE (mask == 0)
-        // -------------------------
-        if (!filterMode) {
-            // Cross-play activation:
-            // Tap empty slot with EMPTY hand/cursor -> toggles slot into "locked (armed)" state
-            // (No placeholder item. Slot stays visually empty.)
-            if (slotEmpty && cursorEmpty && handEmpty) {
-                event.setCancelled(true);
-                int newMask = HopperFilterStorage.lock(0, raw);
-                HopperFilterStorage.setLockMask(ts, newMask);
-                // rule stays null until they set it
-                player.updateInventory();
-                return;
-            }
-
-            // Optional Java convenience:
-            // Clicking empty slot with an item on CURSOR (or in HAND) will directly arm+set rule (freeze 1 item)
-            // This is what you asked to keep for Java players.
-            ItemStack offered = !cursorEmpty ? cursor : (!handEmpty ? hand : null);
-            if (slotEmpty && offered != null && offered.getType() != Material.AIR) {
-                String rule = toRule(offered);
-                if (rule == null) return; // if unsupported, let vanilla handle it
-
-                event.setCancelled(true);
-                // Arm + freeze 1 item
-                int newMask = HopperFilterStorage.lock(0, raw);
-                HopperFilterStorage.setLockMask(ts, newMask);
-                freezeOneIntoSlot(top, raw, event, player, offered, !cursorEmpty);
-
-                HopperFilterStorage.setRule(ts, raw, rule);
-
-                // Disable all other slots (keep empty)
-                clearUnlockedSlots(top, HopperFilterStorage.getLockMask(ts));
-                player.updateInventory();
-                return;
-            }
-
-            // Otherwise: vanilla interaction
-            return;
-        }
-
-        // -------------------------
-        // FILTER MODE (mask != 0)
-        // -------------------------
-
-        // If slot is locked:
-        if (slotLocked) {
-            // If slot currently has a frozen item:
-            if (!slotEmpty) {
-                // Unlock only when player has empty cursor+hand (Bedrock friendly)
-                // (prevents accidental removal while trying to place items)
-                if (!cursorEmpty || !handEmpty) {
-                    event.setCancelled(true);
-                    return;
-                }
-
-                event.setCancelled(true);
-
-                // Return frozen item
-                ItemStack frozen = slotItem.clone();
-                top.setItem(raw, null);
-
-                Map<Integer, ItemStack> overflow = player.getInventory().addItem(frozen);
-                for (ItemStack over : overflow.values()) {
-                    player.getWorld().dropItemNaturally(player.getLocation(), over);
-                }
-
-                HopperFilterStorage.setRule(ts, raw, null);
-                int newMask = HopperFilterStorage.unlock(mask, raw);
-
-                if (newMask == 0) {
-                    // Back to vanilla
-                    HopperFilterStorage.clearAll(ts);
-                } else {
-                    HopperFilterStorage.setLockMask(ts, newMask);
-                    clearUnlockedSlots(top, newMask);
-                }
-
-                player.updateInventory();
-                return;
-            }
-
-            // Locked but empty = "armed slot".
-            // If player offers an item (cursor preferred, else hand), set rule + freeze 1.
-            ItemStack offered = !cursorEmpty ? cursor : (!handEmpty ? hand : null);
-            if (slotEmpty && offered != null && offered.getType() != Material.AIR) {
-                String rule = toRule(offered);
-                if (rule == null) {
-                    event.setCancelled(true);
-                    return;
-                }
-
-                event.setCancelled(true);
-
-                freezeOneIntoSlot(top, raw, event, player, offered, !cursorEmpty);
-                HopperFilterStorage.setRule(ts, raw, rule);
-
-                clearUnlockedSlots(top, mask);
-                player.updateInventory();
-                return;
-            }
-
-            // Locked empty + empty hand/cursor -> toggle unlock (disarm)
-            if (slotEmpty && cursorEmpty && handEmpty) {
-                event.setCancelled(true);
-
-                HopperFilterStorage.setRule(ts, raw, null);
-                int newMask = HopperFilterStorage.unlock(mask, raw);
-
-                if (newMask == 0) {
-                    HopperFilterStorage.clearAll(ts);
-                } else {
-                    HopperFilterStorage.setLockMask(ts, newMask);
-                    clearUnlockedSlots(top, newMask);
-                }
-                player.updateInventory();
-                return;
-            }
-
-            // Otherwise block
+        // Block all interactions with hopper top inventory slots 0..4 if filter enabled
+        int raw = event.getRawSlot();
+        if (raw >= 0 && raw <= 4) {
             event.setCancelled(true);
-            return;
-        }
-
-        // Slot is NOT locked in filter mode -> disabled.
-        // Allow: tap empty disabled slot with empty hand/cursor => lock (arm) it.
-        if (slotEmpty && cursorEmpty && handEmpty) {
-            event.setCancelled(true);
-            int newMask = HopperFilterStorage.lock(mask, raw);
-            HopperFilterStorage.setLockMask(ts, newMask);
-            clearUnlockedSlots(top, newMask);
-            player.updateInventory();
-            return;
-        }
-
-        // Block any other interaction with disabled slots
-        event.setCancelled(true);
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onHopperDrag(InventoryDragEvent event) {
-        if (event.getView().getTopInventory().getType() != InventoryType.HOPPER) return;
-
-        Inventory top = event.getView().getTopInventory();
-        InventoryHolder holder = top.getHolder();
-        if (!(holder instanceof Hopper hopperState)) return;
-
-        Block hopperBlock = hopperState.getBlock();
-        Optional<TileState> tsOpt = HopperFilterStorage.getTileState(hopperBlock);
-        if (tsOpt.isEmpty()) return;
-
-        int mask = HopperFilterStorage.getLockMask(tsOpt.get());
-        if (mask == 0) return; // vanilla mode
-
-        // Any drag affecting top slots 0..4 is blocked
-        for (int rawSlot : event.getRawSlots()) {
-            if (rawSlot >= 0 && rawSlot <= 4) {
-                event.setCancelled(true);
-                return;
-            }
-        }
-    }
-
-    private static void freezeOneIntoSlot(
-            Inventory hopperInv,
-            int slot,
-            InventoryClickEvent event,
-            Player player,
-            ItemStack offered,
-            boolean fromCursor
-    ) {
-        ItemStack frozen = offered.clone();
-        frozen.setAmount(1);
-        hopperInv.setItem(slot, frozen);
-
-        if (fromCursor) {
-            ItemStack cursor = event.getCursor();
-            if (cursor == null || cursor.getType() == Material.AIR) return;
-
-            if (cursor.getAmount() <= 1) event.setCursor(null);
-            else {
-                cursor.setAmount(cursor.getAmount() - 1);
-                event.setCursor(cursor);
-            }
-        } else {
-            // from main hand
-            ItemStack hand = player.getInventory().getItemInMainHand();
-            if (hand == null || hand.getType() == Material.AIR) return;
-
-            if (hand.getAmount() <= 1) player.getInventory().setItemInMainHand(null);
-            else {
-                hand.setAmount(hand.getAmount() - 1);
-                player.getInventory().setItemInMainHand(hand);
-            }
-        }
-    }
-
-    private static void clearUnlockedSlots(Inventory hopperInv, int mask) {
-        for (int i = 0; i < 5; i++) {
-            if (!HopperFilterStorage.isLocked(mask, i)) {
-                hopperInv.setItem(i, null);
-            }
+            p.sendMessage(ChatColor.RED + "This hopper is in Filter Mode. Sneak-tap or /hf to configure.");
         }
     }
 
     // -------------------------
-    // ROUTING / FILTERING
+    // GUI
+    // -------------------------
+
+    public void openFilterGui(Player p, Block hopperBlock) {
+        Optional<TileState> tsOpt = HopperFilterStorage.getTile(hopperBlock);
+        if (tsOpt.isEmpty()) return;
+
+        TileState ts = tsOpt.get();
+
+        Inventory gui = Bukkit.createInventory(new HopperGuiHolder(hopperBlock), 27, GUI_TITLE);
+
+        // Load templates 0..4
+        for (int i = 0; i < 5; i++) {
+            String rule = HopperFilterStorage.getRule(ts, i).orElse(null);
+            gui.setItem(i, ruleToDisplayItem(rule));
+        }
+
+        // Toggle button
+        boolean enabled = HopperFilterStorage.isEnabled(ts);
+        gui.setItem(SLOT_TOGGLE, toggleItem(enabled));
+
+        // Close
+        gui.setItem(SLOT_CLOSE, closeItem());
+
+        p.openInventory(gui);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onGuiClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player p)) return;
+        Inventory top = event.getView().getTopInventory();
+        if (!(top.getHolder() instanceof HopperGuiHolder holder)) return;
+
+        if (!p.hasPermission(HopperFiltersCommand.PERM_USE)) {
+            event.setCancelled(true);
+            p.sendMessage(ChatColor.RED + "You don't have permission.");
+            return;
+        }
+
+        int raw = event.getRawSlot();
+
+        // Click inside our GUI
+        if (raw >= 0 && raw < top.getSize()) {
+            // Toggle
+            if (raw == SLOT_TOGGLE) {
+                event.setCancelled(true);
+                Optional<TileState> tsOpt = HopperFilterStorage.getTile(holder.hopperBlock());
+                if (tsOpt.isEmpty()) return;
+
+                TileState ts = tsOpt.get();
+                boolean newEnabled = !HopperFilterStorage.isEnabled(ts);
+                HopperFilterStorage.setEnabled(ts, newEnabled);
+
+                // If enabled but no rules, keep enabled allowed (acts vanilla until rule set)
+                top.setItem(SLOT_TOGGLE, toggleItem(newEnabled));
+                p.playSound(p.getLocation(), org.bukkit.Sound.UI_BUTTON_CLICK, 1f, newEnabled ? 1.2f : 0.8f);
+                return;
+            }
+
+            // Close
+            if (raw == SLOT_CLOSE) {
+                event.setCancelled(true);
+                p.closeInventory();
+                return;
+            }
+
+            // Template slots 0..4
+            if (raw >= 0 && raw <= 4) {
+                // Allow placing/removing template items; convert to rule and canonicalize to 1 item
+                event.setCancelled(true);
+
+                ItemStack cursor = event.getCursor();
+                ItemStack current = top.getItem(raw);
+
+                boolean cursorEmpty = (cursor == null || cursor.getType().isAir());
+                boolean currentEmpty = (current == null || current.getType().isAir());
+
+                Optional<TileState> tsOpt = HopperFilterStorage.getTile(holder.hopperBlock());
+                if (tsOpt.isEmpty()) return;
+                TileState ts = tsOpt.get();
+
+                // If cursor empty -> pick up existing template (clear)
+                if (cursorEmpty) {
+                    if (!currentEmpty) {
+                        // give back to cursor
+                        event.setCursor(current.clone());
+                        top.setItem(raw, null);
+                        HopperFilterStorage.setRule(ts, raw, null);
+                    }
+                    return;
+                }
+
+                // cursor has item -> set template
+                String rule = toRule(cursor);
+                if (rule == null) {
+                    p.sendMessage(ChatColor.RED + "That item cannot be used as a filter template.");
+                    return;
+                }
+
+                // Set canonical display item
+                ItemStack display = ruleToDisplayItem(rule);
+                top.setItem(raw, display);
+                HopperFilterStorage.setRule(ts, raw, rule);
+
+                // Consume 1 from cursor
+                if (cursor.getAmount() <= 1) {
+                    event.setCursor(null);
+                } else {
+                    cursor.setAmount(cursor.getAmount() - 1);
+                    event.setCursor(cursor);
+                }
+                return;
+            }
+
+            // Block other GUI slots
+            event.setCancelled(true);
+            return;
+        }
+
+        // Shift-click from player inventory into GUI: put into first empty template slot
+        if (event.isShiftClick()) {
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked == null || clicked.getType().isAir()) return;
+
+            String rule = toRule(clicked);
+            if (rule == null) return;
+
+            // find first empty template
+            int slot = firstEmptyTemplateSlot(top);
+            if (slot == -1) return;
+
+            event.setCancelled(true);
+
+            Optional<TileState> tsOpt = HopperFilterStorage.getTile(holder.hopperBlock());
+            if (tsOpt.isEmpty()) return;
+            TileState ts = tsOpt.get();
+
+            top.setItem(slot, ruleToDisplayItem(rule));
+            HopperFilterStorage.setRule(ts, slot, rule);
+
+            // consume 1 from clicked stack
+            clicked.setAmount(clicked.getAmount() - 1);
+            if (clicked.getAmount() <= 0) event.setCurrentItem(null);
+            else event.setCurrentItem(clicked);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onGuiClose(InventoryCloseEvent event) {
+        Inventory top = event.getInventory();
+        if (!(top.getHolder() instanceof HopperGuiHolder holder)) return;
+
+        // GUI saves are already written on click; nothing required here.
+        // (Kept for future extensions.)
+    }
+
+    private int firstEmptyTemplateSlot(Inventory gui) {
+        for (int i = 0; i < 5; i++) {
+            ItemStack it = gui.getItem(i);
+            if (it == null || it.getType().isAir()) return i;
+        }
+        return -1;
+    }
+
+    // -------------------------
+    // Routing / Filtering
     // -------------------------
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -282,33 +263,30 @@ public final class HopperFilterListener implements Listener {
         if (!(holder instanceof Hopper hopperState)) return;
 
         Block hopperBlock = hopperState.getBlock();
-        Optional<TileState> tsOpt = HopperFilterStorage.getTileState(hopperBlock);
+        Optional<TileState> tsOpt = HopperFilterStorage.getTile(hopperBlock);
         if (tsOpt.isEmpty()) return;
 
         TileState ts = tsOpt.get();
-        int mask = HopperFilterStorage.getLockMask(ts);
-        if (mask == 0) return; // vanilla hopper
+        if (!HopperFilterStorage.isEnabled(ts)) return;
+
+        // If enabled but no templates, act vanilla (prevents “armed breaks hopper”)
+        if (!HopperFilterStorage.hasAnyRule(ts)) return;
 
         ItemStack moving = event.getItem();
         if (moving == null || moving.getType().isAir()) return;
 
-        // Never allow items to enter hopper inventory in filter mode.
-        // If it doesn't match, block it.
-        if (!matchesAny(ts, mask, moving)) {
-            event.setCancelled(true);
+        if (!matchesAny(ts, moving)) {
+            event.setCancelled(true); // block non-matching from entering
             return;
         }
 
-        // Must have a valid output container to move anything.
         Inventory out = getHopperOutputInventory(hopperBlock);
         if (out == null) {
-            // "If there's no container attached, it just doesn't filter items."
-            // Cancel so it doesn't enter hopper buffer.
-            event.setCancelled(true);
+            event.setCancelled(true); // no output, do nothing (no deletion)
             return;
         }
 
-        // Cancel vanilla insert into hopper; we route directly to output
+        // route
         event.setCancelled(true);
 
         ItemStack toInsert = moving.clone();
@@ -319,10 +297,8 @@ public final class HopperFilterListener implements Listener {
             int rem = remainder.values().iterator().next().getAmount();
             inserted = moving.getAmount() - rem;
         }
-
         if (inserted <= 0) return;
 
-        // Remove from source only what actually inserted
         removeSimilar(event.getSource(), moving, inserted);
     }
 
@@ -333,18 +309,18 @@ public final class HopperFilterListener implements Listener {
         if (!(holder instanceof Hopper hopperState)) return;
 
         Block hopperBlock = hopperState.getBlock();
-        Optional<TileState> tsOpt = HopperFilterStorage.getTileState(hopperBlock);
+        Optional<TileState> tsOpt = HopperFilterStorage.getTile(hopperBlock);
         if (tsOpt.isEmpty()) return;
 
         TileState ts = tsOpt.get();
-        int mask = HopperFilterStorage.getLockMask(ts);
-        if (mask == 0) return;
+        if (!HopperFilterStorage.isEnabled(ts)) return;
+        if (!HopperFilterStorage.hasAnyRule(ts)) return;
 
         Item entity = event.getItem();
         ItemStack stack = entity.getItemStack();
         if (stack == null || stack.getType().isAir()) return;
 
-        if (!matchesAny(ts, mask, stack)) {
+        if (!matchesAny(ts, stack)) {
             event.setCancelled(true);
             return;
         }
@@ -365,30 +341,8 @@ public final class HopperFilterListener implements Listener {
             return;
         }
 
-        // partial insert
         ItemStack rem = remainder.values().iterator().next();
         entity.setItemStack(rem);
-    }
-
-    /**
-     * Prevent the hopper from pushing its frozen template items out.
-     * Vanilla will try to move items from hopper -> container. In filter mode, cancel it.
-     */
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onHopperPushOut(InventoryMoveItemEvent event) {
-        Inventory src = event.getSource();
-        InventoryHolder holder = src.getHolder();
-        if (!(holder instanceof Hopper hopperState)) return;
-
-        Block hopperBlock = hopperState.getBlock();
-        Optional<TileState> tsOpt = HopperFilterStorage.getTileState(hopperBlock);
-        if (tsOpt.isEmpty()) return;
-
-        int mask = HopperFilterStorage.getLockMask(tsOpt.get());
-        if (mask == 0) return;
-
-        // In filter mode, hopper inventory only holds frozen templates; never push anything out.
-        event.setCancelled(true);
     }
 
     private Inventory getHopperOutputInventory(Block hopperBlock) {
@@ -396,12 +350,8 @@ public final class HopperFilterListener implements Listener {
         Block face = hopperBlock.getRelative(dir.getFacing());
 
         BlockState st = face.getState();
-        if (st instanceof Container c) {
-            return c.getInventory();
-        }
-        if (st instanceof InventoryHolder ih) {
-            return ih.getInventory();
-        }
+        if (st instanceof Container c) return c.getInventory();
+        if (st instanceof InventoryHolder ih) return ih.getInventory();
         return null;
     }
 
@@ -421,16 +371,15 @@ public final class HopperFilterListener implements Listener {
 
             if (remaining <= 0) break;
         }
-
         source.setContents(contents);
     }
 
     // -------------------------
-    // RULES / MATCHING
+    // Rules / matching
     // -------------------------
 
-    private boolean matchesAny(TileState ts, int mask, ItemStack item) {
-        // Tools/armor: custom named OR enchanted => unsortable (ignored)
+    private boolean matchesAny(TileState ts, ItemStack item) {
+        // Tools/armor: custom named OR enchanted => unsortable
         if (isToolOrArmor(item.getType())) {
             ItemMeta meta = item.getItemMeta();
             if (meta != null) {
@@ -440,12 +389,8 @@ public final class HopperFilterListener implements Listener {
         }
 
         for (int slot = 0; slot < 5; slot++) {
-            if (!HopperFilterStorage.isLocked(mask, slot)) continue;
-
-            // Locked slot may be "armed" with no rule yet; ignore until rule set.
             String rule = HopperFilterStorage.getRule(ts, slot).orElse(null);
             if (rule == null) continue;
-
             if (matchesRule(rule, item)) return true;
         }
         return false;
@@ -460,13 +405,11 @@ public final class HopperFilterListener implements Listener {
         if (rule.startsWith("ENCH:")) {
             if (item.getType() != Material.ENCHANTED_BOOK) return false;
             String keyStr = rule.substring("ENCH:".length());
-
-            Enchantment ench = Enchantment.getByKey(NamespacedKey.fromString(keyStr));
+            Enchantment ench = Enchantment.getByKey(org.bukkit.NamespacedKey.fromString(keyStr));
             if (ench == null) return false;
 
             ItemMeta meta = item.getItemMeta();
             if (!(meta instanceof EnchantmentStorageMeta esm)) return false;
-
             return esm.hasStoredEnchant(ench);
         }
 
@@ -476,7 +419,6 @@ public final class HopperFilterListener implements Listener {
     private String toRule(ItemStack stack) {
         if (stack == null || stack.getType().isAir()) return null;
 
-        // Enchanted book => ENCH:<key> (first stored enchant)
         if (stack.getType() == Material.ENCHANTED_BOOK) {
             ItemMeta meta = stack.getItemMeta();
             if (!(meta instanceof EnchantmentStorageMeta esm)) return null;
@@ -485,21 +427,74 @@ public final class HopperFilterListener implements Listener {
 
             Enchantment first = stored.keySet().iterator().next();
             if (first.getKey() == null) return null;
-            return "ENCH:" + first.getKey();
+            return "ENCH:" + first.getKey().toString();
         }
 
-        // Everything else: material match (includes shulker boxes by color/material)
         return "MAT:" + stack.getType().name();
+    }
+
+    private ItemStack ruleToDisplayItem(String rule) {
+        if (rule == null) return null;
+
+        if (rule.startsWith("MAT:")) {
+            Material mat = Material.matchMaterial(rule.substring("MAT:".length()));
+            if (mat == null) return null;
+            ItemStack it = new ItemStack(mat, 1);
+            return it;
+        }
+
+        if (rule.startsWith("ENCH:")) {
+            String keyStr = rule.substring("ENCH:".length());
+            Enchantment ench = Enchantment.getByKey(org.bukkit.NamespacedKey.fromString(keyStr));
+            if (ench == null) return null;
+
+            ItemStack book = new ItemStack(Material.ENCHANTED_BOOK, 1);
+            ItemMeta meta = book.getItemMeta();
+            if (meta instanceof EnchantmentStorageMeta esm) {
+                esm.addStoredEnchant(ench, 1, true);
+                book.setItemMeta(esm);
+            }
+            return book;
+        }
+
+        return null;
+    }
+
+    private ItemStack toggleItem(boolean enabled) {
+        ItemStack it = new ItemStack(enabled ? Material.LIME_DYE : Material.GRAY_DYE, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(enabled ? (ChatColor.GREEN + "Filter Mode: ON") : (ChatColor.GRAY + "Filter Mode: OFF"));
+            meta.setLore(List.of(
+                    ChatColor.DARK_GRAY + "Sneak-tap hopper or /hf to configure.",
+                    ChatColor.DARK_GRAY + "When ON: routes only matching items."
+            ));
+            it.setItemMeta(meta);
+        }
+        return it;
+    }
+
+    private ItemStack closeItem() {
+        ItemStack it = new ItemStack(Material.BARRIER, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(ChatColor.RED + "Close");
+            it.setItemMeta(meta);
+        }
+        return it;
     }
 
     private static boolean isToolOrArmor(Material mat) {
         String n = mat.name();
-
         if (n.endsWith("_HELMET") || n.endsWith("_CHESTPLATE") || n.endsWith("_LEGGINGS") || n.endsWith("_BOOTS")) return true;
         if (n.endsWith("_SWORD") || n.endsWith("_AXE") || n.endsWith("_PICKAXE") || n.endsWith("_SHOVEL") || n.endsWith("_HOE")) return true;
         if (n.equals("BOW") || n.equals("CROSSBOW") || n.equals("TRIDENT")) return true;
         if (n.equals("SHIELD") || n.equals("ELYTRA")) return true;
-
         return false;
+    }
+
+    // Holder to tie GUI to a specific hopper block
+    private record HopperGuiHolder(Block hopperBlock) implements InventoryHolder {
+        @Override public Inventory getInventory() { return null; }
     }
 }
