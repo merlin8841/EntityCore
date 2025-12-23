@@ -1,0 +1,6 @@
+name: EntityCore
+main: com.entitycore.EntityCore
+version: 1.0.0
+api-version: 1.20
+authors: [Kris]
+description: Modular base plugin for EntityCore
