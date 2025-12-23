@@ -7,11 +7,11 @@ description: Modular base plugin for EntityCore
 
 commands:
   hf:
-    description: Open hopper filter GUI for the hopper you are looking at
+    description: Open hopper filter menu for the hopper you're looking at
     usage: /hf
-    aliases: [hopperfilter]
+    aliases: [hopperfilter, hopper-filter, hopperfilters, hopper-filters]
 
 permissions:
   entitycore.hopperfilters.use:
-    description: Allows using hopper filter configuration (sneak-tap hopper or /hf)
+    description: Allows using hopper filters
     default: true
