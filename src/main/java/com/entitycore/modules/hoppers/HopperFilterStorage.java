@@ -14,77 +14,66 @@ final class HopperFilterStorage {
     private HopperFilterStorage() {}
 
     private static NamespacedKey KEY_VERSION;
-    private static NamespacedKey KEY_LOCK_MASK;
-    private static NamespacedKey[] KEY_SLOT_RULE; // 0..4
+    private static NamespacedKey KEY_ENABLED;        // boolean byte
+    private static NamespacedKey[] KEY_RULE;         // 0..4 (String)
 
     static void init(JavaPlugin plugin) {
-        KEY_VERSION = new NamespacedKey(plugin, "hopper_filter_v");
-        KEY_LOCK_MASK = new NamespacedKey(plugin, "hopper_filter_lock_mask");
-        KEY_SLOT_RULE = new NamespacedKey[5];
+        KEY_VERSION = new NamespacedKey(plugin, "hopper_filter_v2");
+        KEY_ENABLED = new NamespacedKey(plugin, "hopper_filter_enabled");
+        KEY_RULE = new NamespacedKey[5];
         for (int i = 0; i < 5; i++) {
-            KEY_SLOT_RULE[i] = new NamespacedKey(plugin, "hopper_filter_rule_" + i);
+            KEY_RULE[i] = new NamespacedKey(plugin, "hopper_filter_rule_" + i);
         }
     }
 
-    static Optional<TileState> getTileState(Block hopperBlock) {
-        if (hopperBlock == null) return Optional.empty();
-        BlockState state = hopperBlock.getState();
-        if (!(state instanceof TileState ts)) return Optional.empty();
-        return Optional.of(ts);
+    static Optional<TileState> getTile(Block block) {
+        if (block == null) return Optional.empty();
+        BlockState st = block.getState();
+        if (st instanceof TileState ts) return Optional.of(ts);
+        return Optional.empty();
     }
 
-    static int getLockMask(TileState ts) {
+    static boolean isEnabled(TileState ts) {
         PersistentDataContainer pdc = ts.getPersistentDataContainer();
-        Integer mask = pdc.get(KEY_LOCK_MASK, PersistentDataType.INTEGER);
-        return mask == null ? 0 : mask;
+        Byte b = pdc.get(KEY_ENABLED, PersistentDataType.BYTE);
+        return b != null && b == (byte) 1;
     }
 
-    static void setLockMask(TileState ts, int mask) {
+    static void setEnabled(TileState ts, boolean enabled) {
         PersistentDataContainer pdc = ts.getPersistentDataContainer();
-        pdc.set(KEY_VERSION, PersistentDataType.INTEGER, 1);
-        if (mask == 0) {
-            pdc.remove(KEY_LOCK_MASK);
-        } else {
-            pdc.set(KEY_LOCK_MASK, PersistentDataType.INTEGER, mask);
-        }
+        pdc.set(KEY_VERSION, PersistentDataType.INTEGER, 2);
+        if (enabled) pdc.set(KEY_ENABLED, PersistentDataType.BYTE, (byte) 1);
+        else pdc.remove(KEY_ENABLED);
         ts.update(true, false);
     }
 
     static Optional<String> getRule(TileState ts, int slot) {
         if (slot < 0 || slot > 4) return Optional.empty();
         PersistentDataContainer pdc = ts.getPersistentDataContainer();
-        return Optional.ofNullable(pdc.get(KEY_SLOT_RULE[slot], PersistentDataType.STRING));
+        return Optional.ofNullable(pdc.get(KEY_RULE[slot], PersistentDataType.STRING));
     }
 
-    static void setRule(TileState ts, int slot, String rule) {
+    static void setRule(TileState ts, int slot, String ruleOrNull) {
         if (slot < 0 || slot > 4) return;
         PersistentDataContainer pdc = ts.getPersistentDataContainer();
-        if (rule == null || rule.isBlank()) {
-            pdc.remove(KEY_SLOT_RULE[slot]);
-        } else {
-            pdc.set(KEY_VERSION, PersistentDataType.INTEGER, 1);
-            pdc.set(KEY_SLOT_RULE[slot], PersistentDataType.STRING, rule);
-        }
+        pdc.set(KEY_VERSION, PersistentDataType.INTEGER, 2);
+        if (ruleOrNull == null || ruleOrNull.isBlank()) pdc.remove(KEY_RULE[slot]);
+        else pdc.set(KEY_RULE[slot], PersistentDataType.STRING, ruleOrNull);
         ts.update(true, false);
     }
 
     static void clearAll(TileState ts) {
         PersistentDataContainer pdc = ts.getPersistentDataContainer();
         pdc.remove(KEY_VERSION);
-        pdc.remove(KEY_LOCK_MASK);
-        for (int i = 0; i < 5; i++) pdc.remove(KEY_SLOT_RULE[i]);
+        pdc.remove(KEY_ENABLED);
+        for (int i = 0; i < 5; i++) pdc.remove(KEY_RULE[i]);
         ts.update(true, false);
     }
 
-    static boolean isLocked(int mask, int slot) {
-        return (mask & (1 << slot)) != 0;
-    }
-
-    static int lock(int mask, int slot) {
-        return mask | (1 << slot);
-    }
-
-    static int unlock(int mask, int slot) {
-        return mask & ~(1 << slot);
+    static boolean hasAnyRule(TileState ts) {
+        for (int i = 0; i < 5; i++) {
+            if (getRule(ts, i).orElse(null) != null) return true;
+        }
+        return false;
     }
 }
