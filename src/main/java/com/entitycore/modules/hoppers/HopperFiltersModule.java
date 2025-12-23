@@ -18,7 +18,7 @@ public final class HopperFiltersModule {
         this.plugin = plugin;
     }
 
-    public void enable() {
+    public void onEnable() {
         this.data = new HopperFilterData(plugin);
         this.menu = new HopperFiltersMenu(data);
         this.listener = new HopperFiltersListener(data, menu);
@@ -26,17 +26,16 @@ public final class HopperFiltersModule {
 
         Bukkit.getPluginManager().registerEvents(listener, plugin);
 
-        // Command wiring: ensure plugin.yml defines "hf"
-        PluginCommand pc = plugin.getCommand("hf");
-        if (pc != null) {
-            pc.setExecutor(command);
-            pc.setTabCompleter(command);
+        PluginCommand hf = plugin.getCommand("hf");
+        if (hf != null) {
+            hf.setExecutor(command);
+            hf.setTabCompleter(command);
         } else {
             plugin.getLogger().warning("Command 'hf' missing from plugin.yml");
         }
     }
 
-    public void disable() {
+    public void onDisable() {
         if (listener != null) {
             HandlerList.unregisterAll(listener);
         }
