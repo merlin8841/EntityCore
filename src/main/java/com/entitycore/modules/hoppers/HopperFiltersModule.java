@@ -30,9 +30,21 @@ public final class HopperFiltersModule implements Module {
             plugin.getCommand("hf").setExecutor(this.command);
             plugin.getCommand("hf").setTabCompleter(this.command);
         } else {
-            plugin.getLogger().warning("[HopperFilters] Missing command 'hf' in plugin.yml. /hf will not work.");
+            plugin.getLogger().warning("[HopperFilters] Command 'hf' missing from plugin.yml");
         }
 
-        plugin.getLogger().info("[HopperFilters] Enabled.");
+        plugin.getLogger().info("[HopperFilters] Enabled");
+    }
+
+    @Override
+    public void disable() {
+        if (this.listener != null) {
+            HandlerList.unregisterAll(this.listener);
+            this.listener = null;
+        }
+
+        // Command executors are not listeners; nothing to unregister.
+        this.command = null;
+        this.plugin = null;
     }
 }
