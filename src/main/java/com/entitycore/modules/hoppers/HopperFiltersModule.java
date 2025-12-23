@@ -35,17 +35,4 @@ public final class HopperFiltersModule implements Module {
 
         plugin.getLogger().info("[HopperFilters] Enabled.");
     }
-
-    @Override
-    public void disable() {
-        if (this.listener != null) {
-            HandlerList.unregisterAll(this.listener);
-            this.listener = null;
-        }
-        if (this.command != null) {
-            HandlerList.unregisterAll(this.command);
-            this.command = null;
-        }
-        this.plugin = null;
-    }
 }
