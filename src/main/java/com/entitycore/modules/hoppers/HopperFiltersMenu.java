@@ -29,15 +29,12 @@ public final class HopperFiltersMenu {
         this.data = data;
     }
 
-    public boolean isOurMenu(Inventory inv) {
-        return inv != null && TITLE.equals(inv.getTitle());
-    }
-
     public boolean isEditing(Player player) {
-        return openEditors.containsKey(player.getUniqueId());
+        return player != null && openEditors.containsKey(player.getUniqueId());
     }
 
     public Block getEditingHopper(Player player) {
+        if (player == null) return null;
         HopperRef ref = openEditors.get(player.getUniqueId());
         return ref == null ? null : ref.resolve();
     }
@@ -57,14 +54,13 @@ public final class HopperFiltersMenu {
                 continue;
             }
 
-            Material mat = Material.matchMaterial(key.replace("minecraft:", "").toUpperCase(Locale.ROOT));
+            Material mat = materialFromKey(key);
             if (mat == null) {
                 inv.setItem(i, null);
                 continue;
             }
 
-            ItemStack icon = new ItemStack(mat, 1);
-            inv.setItem(i, icon);
+            inv.setItem(i, new ItemStack(mat, 1));
         }
 
         // Buttons
@@ -77,11 +73,12 @@ public final class HopperFiltersMenu {
         player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
-    public void saveAndClose(Player player, Inventory inv) {
-        if (player == null) return;
+    public void save(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
 
         Block hopper = getEditingHopper(player);
         openEditors.remove(player.getUniqueId());
+
         if (hopper == null || !data.isHopperBlock(hopper)) return;
 
         List<String> filters = new ArrayList<>(Collections.nCopies(HopperFilterData.FILTER_SLOTS, ""));
@@ -92,7 +89,6 @@ public final class HopperFiltersMenu {
                 filters.set(i, "");
                 continue;
             }
-            // Normalize to material key only
             filters.set(i, it.getType().getKey().toString());
         }
 
@@ -100,6 +96,8 @@ public final class HopperFiltersMenu {
     }
 
     public void toggle(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
+
         Block hopper = getEditingHopper(player);
         if (hopper == null) return;
 
@@ -116,7 +114,7 @@ public final class HopperFiltersMenu {
         ItemMeta meta = it.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(enabled ? "§aFilter: ON" : "§7Filter: OFF");
-            meta.setLore(List.of("§fWhitelist mode using slots 1-25.", "§7When empty, allows everything."));
+            meta.setLore(List.of("§fWhitelist using slots 1-25.", "§7When empty, allows everything."));
             it.setItemMeta(meta);
         }
         return it;
@@ -130,6 +128,19 @@ public final class HopperFiltersMenu {
             it.setItemMeta(meta);
         }
         return it;
+    }
+
+    private Material materialFromKey(String key) {
+        if (key == null || key.isBlank()) return null;
+
+        // key typically "minecraft:stone"
+        String s = key;
+        if (s.startsWith("minecraft:")) s = s.substring("minecraft:".length());
+
+        // Material enum names are upper-case
+        s = s.toUpperCase(Locale.ROOT);
+
+        return Material.matchMaterial(s);
     }
 
     /**
@@ -151,7 +162,8 @@ public final class HopperFiltersMenu {
         }
 
         Block resolve() {
-            return Bukkit.getWorld(worldId) == null ? null : Bukkit.getWorld(worldId).getBlockAt(x, y, z);
+            var world = Bukkit.getWorld(worldId);
+            return world == null ? null : world.getBlockAt(x, y, z);
         }
     }
 }
