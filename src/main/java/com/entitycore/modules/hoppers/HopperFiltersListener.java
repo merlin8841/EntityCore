@@ -3,6 +3,8 @@ package com.entitycore.modules.hoppers;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Sound;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Container;
@@ -23,13 +25,15 @@ import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.*;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 public final class HopperFiltersListener implements Listener {
 
+    @SuppressWarnings("unused")
     private final JavaPlugin plugin;
 
-    private static final int[] TEMPLATE_SLOTS = {0,1,2,3,4};
     private static final int SLOT_TOGGLE = 22;
     private static final int SLOT_CLOSE  = 26;
 
@@ -141,9 +145,8 @@ public final class HopperFiltersListener implements Listener {
                 boolean newEnabled = !HopperFilterStorage.isEnabled(ts);
                 HopperFilterStorage.setEnabled(ts, newEnabled);
 
-                // If enabled but no rules, keep enabled allowed (acts vanilla until rule set)
                 top.setItem(SLOT_TOGGLE, toggleItem(newEnabled));
-                p.playSound(p.getLocation(), org.bukkit.Sound.UI_BUTTON_CLICK, 1f, newEnabled ? 1.2f : 0.8f);
+                p.playSound(p.getLocation(), Sound.UI_BUTTON_CLICK, 1f, newEnabled ? 1.2f : 0.8f);
                 return;
             }
 
@@ -156,7 +159,6 @@ public final class HopperFiltersListener implements Listener {
 
             // Template slots 0..4
             if (raw >= 0 && raw <= 4) {
-                // Allow placing/removing template items; convert to rule and canonicalize to 1 item
                 event.setCancelled(true);
 
                 ItemStack cursor = event.getCursor();
@@ -172,7 +174,6 @@ public final class HopperFiltersListener implements Listener {
                 // If cursor empty -> pick up existing template (clear)
                 if (cursorEmpty) {
                     if (!currentEmpty) {
-                        // give back to cursor
                         event.setCursor(current.clone());
                         top.setItem(raw, null);
                         HopperFilterStorage.setRule(ts, raw, null);
@@ -187,7 +188,6 @@ public final class HopperFiltersListener implements Listener {
                     return;
                 }
 
-                // Set canonical display item
                 ItemStack display = ruleToDisplayItem(rule);
                 top.setItem(raw, display);
                 HopperFilterStorage.setRule(ts, raw, rule);
@@ -215,7 +215,6 @@ public final class HopperFiltersListener implements Listener {
             String rule = toRule(clicked);
             if (rule == null) return;
 
-            // find first empty template
             int slot = firstEmptyTemplateSlot(top);
             if (slot == -1) return;
 
@@ -237,11 +236,9 @@ public final class HopperFiltersListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onGuiClose(InventoryCloseEvent event) {
+        // No-op for now (state is saved on click)
         Inventory top = event.getInventory();
-        if (!(top.getHolder() instanceof HopperGuiHolder holder)) return;
-
-        // GUI saves are already written on click; nothing required here.
-        // (Kept for future extensions.)
+        if (!(top.getHolder() instanceof HopperGuiHolder)) return;
     }
 
     private int firstEmptyTemplateSlot(Inventory gui) {
@@ -269,34 +266,33 @@ public final class HopperFiltersListener implements Listener {
         TileState ts = tsOpt.get();
         if (!HopperFilterStorage.isEnabled(ts)) return;
 
-        // If enabled but no templates, act vanilla (prevents “armed breaks hopper”)
+        // If enabled but no templates, act vanilla
         if (!HopperFilterStorage.hasAnyRule(ts)) return;
 
         ItemStack moving = event.getItem();
         if (moving == null || moving.getType().isAir()) return;
 
         if (!matchesAny(ts, moving)) {
-            event.setCancelled(true); // block non-matching from entering
+            event.setCancelled(true);
             return;
         }
 
         Inventory out = getHopperOutputInventory(hopperBlock);
         if (out == null) {
-            event.setCancelled(true); // no output, do nothing (no deletion)
+            event.setCancelled(true);
             return;
         }
 
-        // route
+        // Route (cancel vanilla insertion)
         event.setCancelled(true);
 
+        int requested = moving.getAmount();
         ItemStack toInsert = moving.clone();
-        Map<Integer, ItemStack> remainder = out.addItem(toInsert);
 
-        int inserted = moving.getAmount();
-        if (!remainder.isEmpty()) {
-            int rem = remainder.values().iterator().next().getAmount();
-            inserted = moving.getAmount() - rem;
-        }
+        Map<Integer, ItemStack> remainder = out.addItem(toInsert);
+        int rem = remainderAmount(remainder);
+        int inserted = requested - rem;
+
         if (inserted <= 0) return;
 
         removeSimilar(event.getSource(), moving, inserted);
@@ -333,16 +329,22 @@ public final class HopperFiltersListener implements Listener {
 
         event.setCancelled(true);
 
+        int requested = stack.getAmount();
         ItemStack toInsert = stack.clone();
+
         Map<Integer, ItemStack> remainder = out.addItem(toInsert);
+        int rem = remainderAmount(remainder);
+        int inserted = requested - rem;
 
-        if (remainder.isEmpty()) {
+        if (inserted <= 0) return;
+
+        if (inserted >= requested) {
             entity.remove();
-            return;
+        } else {
+            ItemStack left = stack.clone();
+            left.setAmount(requested - inserted);
+            entity.setItemStack(left);
         }
-
-        ItemStack rem = remainder.values().iterator().next();
-        entity.setItemStack(rem);
     }
 
     private Inventory getHopperOutputInventory(Block hopperBlock) {
@@ -353,6 +355,16 @@ public final class HopperFiltersListener implements Listener {
         if (st instanceof Container c) return c.getInventory();
         if (st instanceof InventoryHolder ih) return ih.getInventory();
         return null;
+    }
+
+    private static int remainderAmount(Map<Integer, ItemStack> remainder) {
+        if (remainder == null || remainder.isEmpty()) return 0;
+        int rem = 0;
+        for (ItemStack it : remainder.values()) {
+            if (it == null || it.getType().isAir()) continue;
+            rem += it.getAmount();
+        }
+        return rem;
     }
 
     private static void removeSimilar(Inventory source, ItemStack like, int amount) {
@@ -405,7 +417,7 @@ public final class HopperFiltersListener implements Listener {
         if (rule.startsWith("ENCH:")) {
             if (item.getType() != Material.ENCHANTED_BOOK) return false;
             String keyStr = rule.substring("ENCH:".length());
-            Enchantment ench = Enchantment.getByKey(org.bukkit.NamespacedKey.fromString(keyStr));
+            Enchantment ench = Enchantment.getByKey(NamespacedKey.fromString(keyStr));
             if (ench == null) return false;
 
             ItemMeta meta = item.getItemMeta();
@@ -439,13 +451,12 @@ public final class HopperFiltersListener implements Listener {
         if (rule.startsWith("MAT:")) {
             Material mat = Material.matchMaterial(rule.substring("MAT:".length()));
             if (mat == null) return null;
-            ItemStack it = new ItemStack(mat, 1);
-            return it;
+            return new ItemStack(mat, 1);
         }
 
         if (rule.startsWith("ENCH:")) {
             String keyStr = rule.substring("ENCH:".length());
-            Enchantment ench = Enchantment.getByKey(org.bukkit.NamespacedKey.fromString(keyStr));
+            Enchantment ench = Enchantment.getByKey(NamespacedKey.fromString(keyStr));
             if (ench == null) return null;
 
             ItemStack book = new ItemStack(Material.ENCHANTED_BOOK, 1);
