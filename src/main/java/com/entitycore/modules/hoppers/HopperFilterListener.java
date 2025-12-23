@@ -15,6 +15,8 @@ import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.block.BlockState;
+import org.bukkit.block.Container;
 
 import java.util.*;
 
