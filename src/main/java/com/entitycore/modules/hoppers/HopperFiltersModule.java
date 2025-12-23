@@ -26,7 +26,10 @@ public final class HopperFiltersModule implements Module {
 
         this.data = new HopperFilterData(plugin);
         this.menu = new HopperFiltersMenu(data);
-        this.listener = new HopperFiltersListener(data, menu);
+
+        // IMPORTANT: listener now needs plugin for scheduling next-tick transfers
+        this.listener = new HopperFiltersListener(plugin, data, menu);
+
         this.command = new HopperFiltersCommand(plugin, menu);
 
         Bukkit.getPluginManager().registerEvents(listener, plugin);
@@ -44,10 +47,6 @@ public final class HopperFiltersModule implements Module {
 
     @Override
     public void disable() {
-        if (plugin != null) {
-            plugin.getLogger().info("[HopperFilters] Disabling...");
-        }
-
         if (listener != null) {
             HandlerList.unregisterAll(listener);
         }
