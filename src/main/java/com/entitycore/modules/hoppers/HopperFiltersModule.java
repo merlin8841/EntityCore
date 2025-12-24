@@ -27,9 +27,7 @@ public final class HopperFiltersModule implements Module {
         this.data = new HopperFilterData(plugin);
         this.menu = new HopperFiltersMenu(data);
 
-        // IMPORTANT: listener now needs plugin for scheduling next-tick transfers
         this.listener = new HopperFiltersListener(plugin, data, menu);
-
         this.command = new HopperFiltersCommand(plugin, menu);
 
         Bukkit.getPluginManager().registerEvents(listener, plugin);
@@ -42,11 +40,18 @@ public final class HopperFiltersModule implements Module {
             plugin.getLogger().warning("Command 'hf' missing from plugin.yml (HopperFiltersModule).");
         }
 
+        // Start the mover/purge loop
+        listener.start();
+
         plugin.getLogger().info("[HopperFilters] Enabled.");
     }
 
     @Override
     public void disable() {
+        if (listener != null) {
+            listener.stop();
+        }
+
         if (listener != null) {
             HandlerList.unregisterAll(listener);
         }
