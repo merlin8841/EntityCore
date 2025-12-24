@@ -35,6 +35,7 @@ public final class HopperFiltersListener implements Listener {
 
     /* ===============================================================
        GUI HANDLERS (COMMAND-OPENED ONLY)
+       - Persist filter slots during editing, not only on close
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -49,9 +50,9 @@ public final class HopperFiltersListener implements Listener {
             return;
         }
 
-        int slot = event.getRawSlot();
+        int raw = event.getRawSlot();
 
-        if (slot == HopperFiltersMenu.SLOT_TOGGLE) {
+        if (raw == HopperFiltersMenu.SLOT_TOGGLE) {
             event.setCancelled(true);
             if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
                 menu.toggle(p, top);
@@ -59,15 +60,21 @@ public final class HopperFiltersListener implements Listener {
             return;
         }
 
-        if (slot == HopperFiltersMenu.SLOT_CLOSE) {
+        if (raw == HopperFiltersMenu.SLOT_CLOSE) {
             event.setCancelled(true);
             event.getWhoClicked().closeInventory();
             return;
         }
 
         // Block interaction in button area
-        if (slot > HopperFiltersMenu.FILTER_END && slot < top.getSize()) {
+        if (raw > HopperFiltersMenu.FILTER_END && raw < top.getSize()) {
             event.setCancelled(true);
+            return;
+        }
+
+        // Persist after any click that might change slots 0-24 (Bedrock-safe)
+        if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
+            plugin.getServer().getScheduler().runTask(plugin, () -> menu.persist(p, top));
         }
     }
 
@@ -88,6 +95,10 @@ public final class HopperFiltersListener implements Listener {
                 return;
             }
         }
+
+        if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
+            plugin.getServer().getScheduler().runTask(plugin, () -> menu.persist(p, top));
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -98,17 +109,12 @@ public final class HopperFiltersListener implements Listener {
         if (top == null) return;
 
         if (event.getPlayer() instanceof org.bukkit.entity.Player p) {
-            menu.save(p, top);
+            menu.saveAndClose(p, top);
         }
     }
 
     /* ===============================================================
        HOPPER MOVE CONTROL (LOCKED MODE)
-       - We cancel vanilla hopper transfers and do our own 1-item transfer.
-       - Works for:
-         * container -> hopper (intake)
-         * hopper -> container (outflow)
-         * hopper -> hopper (chains)
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -118,44 +124,34 @@ public final class HopperFiltersListener implements Listener {
         Block hopperBlock = initiatorHopper.getBlock();
         if (hopperBlock.getType() != Material.HOPPER) return;
 
-        // Only "lock" behavior if this hopper is enabled (otherwise let vanilla run)
+        // Only lock enabled hoppers
         if (!data.isEnabled(hopperBlock)) return;
 
-        // Gate per tick per hopper
         if (isGated(hopperBlock)) return;
         gate(hopperBlock);
 
-        // Always cancel vanilla behavior for enabled hoppers
         event.setCancelled(true);
 
         Inventory source = event.getSource();
         Inventory dest = event.getDestination();
         if (source == null || dest == null) return;
 
-        // Schedule next tick for stable inventory operations
         plugin.getServer().getScheduler().runTask(plugin, () -> {
             if (hopperBlock.getType() != Material.HOPPER) return;
-
-            // Live hopper state
             if (!(hopperBlock.getState() instanceof Hopper liveHopper)) return;
+
             Inventory hopperInv = liveHopper.getInventory();
             if (hopperInv == null) return;
 
             boolean destIsThisHopper = isSameHopper(dest, hopperBlock);
 
             if (destIsThisHopper) {
-                // INTAKE: container -> THIS hopper
                 pullOneAllowedIntoHopper(source, hopperInv, hopperBlock);
             } else {
-                // OUTFLOW: THIS hopper -> destination (container or another hopper)
                 pushOneAllowedOutOfHopper(hopperInv, dest, hopperBlock);
             }
         });
     }
-
-    /* ===============================================================
-       ITEM ENTITY PICKUP CONTROL (LOCKED MODE)
-       =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onHopperPickup(InventoryPickupItemEvent event) {
@@ -164,10 +160,8 @@ public final class HopperFiltersListener implements Listener {
         Block hopperBlock = hopper.getBlock();
         if (hopperBlock.getType() != Material.HOPPER) return;
 
-        // Only lock behavior if enabled; otherwise vanilla pickup
         if (!data.isEnabled(hopperBlock)) return;
 
-        // Gate per tick per hopper
         if (isGated(hopperBlock)) return;
         gate(hopperBlock);
 
@@ -177,12 +171,10 @@ public final class HopperFiltersListener implements Listener {
 
         String key = stack.getType().getKey().toString();
         if (!data.allows(hopperBlock, key)) {
-            // Not allowed into hopper
             event.setCancelled(true);
             return;
         }
 
-        // Force 1 item pickup (we control it)
         event.setCancelled(true);
 
         ItemStack one = stack.clone();
@@ -207,7 +199,6 @@ public final class HopperFiltersListener implements Listener {
     private void pullOneAllowedIntoHopper(Inventory source, Inventory hopperInv, Block hopperBlock) {
         if (source == null || hopperInv == null) return;
 
-        // Find first allowed item in source inventory
         for (int i = 0; i < source.getSize(); i++) {
             ItemStack it = source.getItem(i);
             if (it == null || it.getType() == Material.AIR) continue;
@@ -215,17 +206,12 @@ public final class HopperFiltersListener implements Listener {
             String key = it.getType().getKey().toString();
             if (!data.allows(hopperBlock, key)) continue;
 
-            // Try add 1 to hopper first
             ItemStack one = it.clone();
             one.setAmount(1);
 
             Map<Integer, ItemStack> leftovers = hopperInv.addItem(one);
-            if (!leftovers.isEmpty()) {
-                // Hopper full
-                return;
-            }
+            if (!leftovers.isEmpty()) return;
 
-            // Then decrement source by 1
             int amt = it.getAmount();
             if (amt <= 1) {
                 source.setItem(i, null);
@@ -240,7 +226,6 @@ public final class HopperFiltersListener implements Listener {
     private void pushOneAllowedOutOfHopper(Inventory hopperInv, Inventory dest, Block hopperBlock) {
         if (hopperInv == null || dest == null) return;
 
-        // Find first allowed item in hopper inventory
         for (int i = 0; i < hopperInv.getSize(); i++) {
             ItemStack it = hopperInv.getItem(i);
             if (it == null || it.getType() == Material.AIR) continue;
@@ -248,23 +233,17 @@ public final class HopperFiltersListener implements Listener {
             String key = it.getType().getKey().toString();
             if (!data.allows(hopperBlock, key)) continue;
 
-            // Destination hopper intake filter (if destination is a hopper)
             if (dest.getHolder() instanceof Hopper destHopper) {
                 Block destBlock = destHopper.getBlock();
                 if (!data.allows(destBlock, key)) continue;
             }
 
-            // Add 1 to destination first
             ItemStack one = it.clone();
             one.setAmount(1);
 
             Map<Integer, ItemStack> leftovers = dest.addItem(one);
-            if (!leftovers.isEmpty()) {
-                // Can't fit
-                return;
-            }
+            if (!leftovers.isEmpty()) return;
 
-            // Then decrement hopper by 1
             int amt = it.getAmount();
             if (amt <= 1) {
                 hopperInv.setItem(i, null);
