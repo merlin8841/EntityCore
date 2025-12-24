@@ -35,14 +35,19 @@ public final class HopperFilterData {
                 && block.getState() instanceof TileState;
     }
 
+    /* ===============================================================
+       Enabled (toggle)
+       =============================================================== */
+
     public boolean isEnabled(Block hopperBlock) {
         if (!isHopperBlock(hopperBlock)) return false;
 
-        CacheEntry ce = cache.get(locKey(hopperBlock));
+        String k = locKey(hopperBlock);
+        CacheEntry ce = cache.get(k);
         if (ce != null) return ce.enabled;
 
         CacheEntry loaded = loadFromPdc(hopperBlock);
-        cache.put(locKey(hopperBlock), loaded);
+        cache.put(k, loaded);
         return loaded.enabled;
     }
 
@@ -60,18 +65,26 @@ public final class HopperFilterData {
         state.update(true, false);
     }
 
+    /* ===============================================================
+       Filters
+       =============================================================== */
+
+    /**
+     * Returns 25-length list of namespaced keys ("minecraft:dirt") or "".
+     */
     public List<String> getFilters(Block hopperBlock) {
         if (!isHopperBlock(hopperBlock)) {
             return new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
         }
 
-        CacheEntry ce = cache.get(locKey(hopperBlock));
+        String k = locKey(hopperBlock);
+        CacheEntry ce = cache.get(k);
         if (ce != null && ce.filters != null) {
             return new ArrayList<>(ce.filters);
         }
 
         CacheEntry loaded = loadFromPdc(hopperBlock);
-        cache.put(locKey(hopperBlock), loaded);
+        cache.put(k, loaded);
         return new ArrayList<>(loaded.filters);
     }
 
@@ -96,30 +109,41 @@ public final class HopperFilterData {
         state.update(true, false);
     }
 
+    /* ===============================================================
+       Allow logic
+       =============================================================== */
+
     /**
      * Allow logic:
-     * - If toggle OFF: allow everything (true vanilla behavior; we won't intercept moves).
-     * - If toggle ON: STRICT whitelist.
-     *   - If whitelist empty: allow NOTHING (prevents junk clog / ambiguity).
+     * - Toggle OFF: allow everything (and in practice listener should not intercept).
+     * - Toggle ON: STRICT whitelist.
+     *   - If whitelist empty: allow NOTHING.
      */
     public boolean allows(Block hopperBlock, String materialKey) {
         if (!isHopperBlock(hopperBlock)) return true;
 
-        CacheEntry ce = cache.get(locKey(hopperBlock));
+        String k = locKey(hopperBlock);
+        CacheEntry ce = cache.get(k);
         if (ce == null) {
             ce = loadFromPdc(hopperBlock);
-            cache.put(locKey(hopperBlock), ce);
+            cache.put(k, ce);
         }
 
-        if (!ce.enabled) return true; // toggle OFF => allow all
+        // Toggle off => allow all
+        if (!ce.enabled) return true;
 
         String key = normalizeKey(materialKey);
         if (key.isBlank()) return false;
 
-        if (ce.allowedSet.isEmpty()) return false; // strict: empty means allow nothing
+        // Strict: empty whitelist means allow nothing
+        if (ce.allowedSet.isEmpty()) return false;
 
         return ce.allowedSet.contains(key);
     }
+
+    /* ===============================================================
+       Internal helpers
+       =============================================================== */
 
     private CacheEntry loadFromPdc(Block hopperBlock) {
         CacheEntry ce = new CacheEntry();
@@ -146,7 +170,8 @@ public final class HopperFilterData {
     }
 
     private String locKey(Block b) {
-        return b.getWorld().getUID() + ":" + b.getX() + b.getY() + ":" + b.getZ();
+        // Correct key format: worldUUID:x:y:z
+        return b.getWorld().getUID() + ":" + b.getX() + ":" + b.getY() + ":" + b.getZ();
     }
 
     private String normalizeKey(String key) {
