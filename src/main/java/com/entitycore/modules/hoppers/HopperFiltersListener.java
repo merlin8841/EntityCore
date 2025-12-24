@@ -24,7 +24,6 @@ public final class HopperFiltersListener implements Listener {
     private final HopperFilterData data;
     private final HopperFiltersMenu menu;
 
-    // One-tick gate per hopper block
     private final Map<String, Long> hopperTickGate = new HashMap<>();
 
     public HopperFiltersListener(JavaPlugin plugin, HopperFilterData data, HopperFiltersMenu menu) {
@@ -34,8 +33,7 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       GUI HANDLERS (COMMAND-OPENED ONLY)
-       - Persist filter slots during editing, not only on close
+       GUI
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -66,13 +64,11 @@ public final class HopperFiltersListener implements Listener {
             return;
         }
 
-        // Block interaction in button area
         if (raw > HopperFiltersMenu.FILTER_END && raw < top.getSize()) {
             event.setCancelled(true);
             return;
         }
 
-        // Persist after any click that might change slots 0-24 (Bedrock-safe)
         if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
             plugin.getServer().getScheduler().runTask(plugin, () -> menu.persist(p, top));
         }
@@ -114,7 +110,9 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       HOPPER MOVE CONTROL (LOCKED MODE)
+       HOPPER CONTROL
+       - Only when toggle ON for this hopper
+       - OFF => do nothing (vanilla)
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -124,7 +122,7 @@ public final class HopperFiltersListener implements Listener {
         Block hopperBlock = initiatorHopper.getBlock();
         if (hopperBlock.getType() != Material.HOPPER) return;
 
-        // Only lock enabled hoppers
+        // If toggle OFF => vanilla
         if (!data.isEnabled(hopperBlock)) return;
 
         if (isGated(hopperBlock)) return;
@@ -160,6 +158,7 @@ public final class HopperFiltersListener implements Listener {
         Block hopperBlock = hopper.getBlock();
         if (hopperBlock.getType() != Material.HOPPER) return;
 
+        // OFF => vanilla pickup
         if (!data.isEnabled(hopperBlock)) return;
 
         if (isGated(hopperBlock)) return;
@@ -192,10 +191,6 @@ public final class HopperFiltersListener implements Listener {
         }
     }
 
-    /* ===============================================================
-       Intake / Outflow helpers
-       =============================================================== */
-
     private void pullOneAllowedIntoHopper(Inventory source, Inventory hopperInv, Block hopperBlock) {
         if (source == null || hopperInv == null) return;
 
@@ -213,9 +208,8 @@ public final class HopperFiltersListener implements Listener {
             if (!leftovers.isEmpty()) return;
 
             int amt = it.getAmount();
-            if (amt <= 1) {
-                source.setItem(i, null);
-            } else {
+            if (amt <= 1) source.setItem(i, null);
+            else {
                 it.setAmount(amt - 1);
                 source.setItem(i, it);
             }
@@ -235,7 +229,8 @@ public final class HopperFiltersListener implements Listener {
 
             if (dest.getHolder() instanceof Hopper destHopper) {
                 Block destBlock = destHopper.getBlock();
-                if (!data.allows(destBlock, key)) continue;
+                // If destination hopper has filter ON, respect it. If OFF, allow all.
+                if (data.isEnabled(destBlock) && !data.allows(destBlock, key)) continue;
             }
 
             ItemStack one = it.clone();
@@ -245,9 +240,8 @@ public final class HopperFiltersListener implements Listener {
             if (!leftovers.isEmpty()) return;
 
             int amt = it.getAmount();
-            if (amt <= 1) {
-                hopperInv.setItem(i, null);
-            } else {
+            if (amt <= 1) hopperInv.setItem(i, null);
+            else {
                 it.setAmount(amt - 1);
                 hopperInv.setItem(i, it);
             }
@@ -264,10 +258,6 @@ public final class HopperFiltersListener implements Listener {
                 && b.getY() == hopperBlock.getY()
                 && b.getZ() == hopperBlock.getZ();
     }
-
-    /* ===============================================================
-       Gate helpers
-       =============================================================== */
 
     private String gateKey(Block hopperBlock) {
         return hopperBlock.getWorld().getUID() + ":" + hopperBlock.getX() + ":" + hopperBlock.getY() + ":" + hopperBlock.getZ();
