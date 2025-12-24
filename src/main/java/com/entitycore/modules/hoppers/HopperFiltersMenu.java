@@ -66,6 +66,9 @@ public final class HopperFiltersMenu {
         player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
+    /**
+     * Persist filter slots while menu is open (Bedrock-safe).
+     */
     public void persist(Player player, Inventory inv) {
         if (player == null || inv == null) return;
 
@@ -98,7 +101,7 @@ public final class HopperFiltersMenu {
         Block hopper = getEditingHopper(player);
         if (hopper == null) return;
 
-        // Persist current filters first
+        // Persist first so strict whitelist uses latest config
         persist(player, inv);
 
         boolean now = !data.isEnabled(hopper);
