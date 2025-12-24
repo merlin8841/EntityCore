@@ -13,7 +13,6 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.inventory.InventoryPickupItemEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -37,30 +36,7 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       OPEN MENU: sneak-interact hopper
-       =============================================================== */
-
-    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
-    public void onSneakInteract(PlayerInteractEvent event) {
-        if (event.getAction() != org.bukkit.event.block.Action.RIGHT_CLICK_BLOCK) return;
-
-        Block block = event.getClickedBlock();
-        if (block == null || block.getType() != Material.HOPPER) return;
-
-        Player player = event.getPlayer();
-        if (!player.isSneaking()) return;
-
-        if (!player.hasPermission("entitycore.hopperfilters.use")) {
-            player.sendMessage("§cYou don't have permission to use hopper filters.");
-            return;
-        }
-
-        event.setCancelled(true);
-        menu.open(player, block);
-    }
-
-    /* ===============================================================
-       GUI HANDLERS
+       GUI HANDLERS (COMMAND-OPENED ONLY)
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -70,6 +46,7 @@ public final class HopperFiltersListener implements Listener {
         Inventory top = event.getView().getTopInventory();
         if (top == null) return;
 
+        // Prevent shift-clicking into menu (Bedrock + Java safety)
         if (event.isShiftClick()) {
             event.setCancelled(true);
             return;
@@ -91,9 +68,11 @@ public final class HopperFiltersListener implements Listener {
             return;
         }
 
+        // Block interaction in button area
         if (slot > HopperFiltersMenu.FILTER_END && slot < top.getSize()) {
             event.setCancelled(true);
         }
+        // Slots 0-24 remain editable filter slots.
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -128,7 +107,10 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       HOPPER TRANSFER CONTROL (NO LOSS VERSION)
+       HOPPER TRANSFER CONTROL
+       - Cancel vanilla move
+       - If server already removed stack, restore it (ONLY when missing)
+       - Next tick: move exactly 1 item safely
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -139,7 +121,7 @@ public final class HopperFiltersListener implements Listener {
         Block hopperBlock = initiatorHopper.getBlock();
         if (hopperBlock.getType() != Material.HOPPER) return;
 
-        // Gate per tick per hopper
+        // Gate per tick per hopper (prevents double scheduling)
         if (isGated(hopperBlock)) return;
         gate(hopperBlock);
 
@@ -150,30 +132,31 @@ public final class HopperFiltersListener implements Listener {
         if (source == null || dest == null) return;
         if (moving == null || moving.getType() == Material.AIR) return;
 
-        // Always cancel vanilla movement (prevents any stack yanks / desync)
+        // Always cancel vanilla movement so we fully control behavior
         event.setCancelled(true);
 
-        // IMPORTANT: some servers remove from source BEFORE event. If so, restore it.
-        // We attempt to put the full stack back immediately.
-        restoreToSource(source, moving, hopperBlock);
+        // If Paper already removed items from the source before firing event,
+        // then the source won't contain the event stack amount anymore.
+        // Only restore in that case to prevent duplication.
+        if (!sourceContainsAtLeast(source, moving.getType(), moving.getAmount())) {
+            restoreToSource(source, moving, hopperBlock);
+        }
 
-        // Now schedule our safe 1-item move next tick.
-        // (Next tick = inventories are stable and no mid-transfer states)
+        // Next tick: inventories stable; move 1 item if allowed
         plugin.getServer().getScheduler().runTask(plugin, () -> {
-            // Re-check inventories exist
             if (hopperBlock.getType() != Material.HOPPER) return;
 
-            // Apply initiator filter (what this hopper is allowed to move)
             String key = moving.getType().getKey().toString();
+
+            // Initiator filter (what this hopper may move)
             if (!data.allows(hopperBlock, key)) return;
 
-            // Apply destination hopper intake filter (if destination is hopper)
+            // Destination hopper intake filter (if destination is hopper)
             if (dest.getHolder() instanceof Hopper destHopper) {
                 Block destBlock = destHopper.getBlock();
                 if (!data.allows(destBlock, key)) return;
             }
 
-            // Do safe one-item move by material type
             moveOneSafely(source, dest, moving.getType());
         });
     }
@@ -201,14 +184,14 @@ public final class HopperFiltersListener implements Listener {
             return;
         }
 
-        // We control pickup to ensure 1 item at a time
+        // Control pickup: 1 item at a time
         event.setCancelled(true);
 
         ItemStack one = stack.clone();
         one.setAmount(1);
 
         Map<Integer, ItemStack> leftovers = event.getInventory().addItem(one);
-        if (!leftovers.isEmpty()) return; // hopper full
+        if (!leftovers.isEmpty()) return;
 
         int amt = stack.getAmount();
         if (amt <= 1) {
@@ -223,18 +206,33 @@ public final class HopperFiltersListener implements Listener {
        Helpers
        =============================================================== */
 
+    private boolean sourceContainsAtLeast(Inventory inv, Material type, int amountNeeded) {
+        if (inv == null || type == null || type == Material.AIR || amountNeeded <= 0) return true;
+
+        int total = 0;
+        for (ItemStack it : inv.getContents()) {
+            if (it == null || it.getType() == Material.AIR) continue;
+            if (it.getType() != type) continue;
+            total += it.getAmount();
+            if (total >= amountNeeded) return true;
+        }
+        return false;
+    }
+
     private void restoreToSource(Inventory source, ItemStack stack, Block hopperBlock) {
+        if (source == null) return;
         if (stack == null || stack.getType() == Material.AIR) return;
 
-        // Try add back exactly what the event claims was moved.
-        // If it was NOT removed, addItem will just stack/fit and leftovers will be returned.
         Map<Integer, ItemStack> leftovers = source.addItem(stack.clone());
 
-        // If there are leftovers, we drop them at the hopper to avoid deleting items.
-        if (!leftovers.isEmpty()) {
+        // If we couldn't restore it all, drop leftovers to avoid deleting items
+        if (!leftovers.isEmpty() && hopperBlock != null && hopperBlock.getWorld() != null) {
             leftovers.values().forEach(left -> {
                 if (left != null && left.getType() != Material.AIR && left.getAmount() > 0) {
-                    hopperBlock.getWorld().dropItemNaturally(hopperBlock.getLocation().add(0.5, 1.0, 0.5), left);
+                    hopperBlock.getWorld().dropItemNaturally(
+                            hopperBlock.getLocation().add(0.5, 1.0, 0.5),
+                            left
+                    );
                 }
             });
         }
@@ -261,7 +259,7 @@ public final class HopperFiltersListener implements Listener {
         ItemStack one = new ItemStack(type, 1);
 
         Map<Integer, ItemStack> leftovers = dest.addItem(one);
-        if (!leftovers.isEmpty()) return; // can't fit, do nothing
+        if (!leftovers.isEmpty()) return;
 
         int amt = srcStack.getAmount();
         if (amt <= 1) {
