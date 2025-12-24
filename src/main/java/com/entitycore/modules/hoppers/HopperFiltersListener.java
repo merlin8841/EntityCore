@@ -14,7 +14,6 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitTask;
-import org.bukkit.util.Vector;
 
 import java.util.*;
 
@@ -26,10 +25,33 @@ public final class HopperFiltersListener implements Listener {
 
     private BukkitTask tickTask;
 
+    // Operator-controlled speed (ticks between iterations). 1 = fastest.
+    private int tickInterval = 1;
+
     public HopperFiltersListener(JavaPlugin plugin, HopperFilterData data, HopperFiltersMenu menu) {
         this.plugin = plugin;
         this.data = data;
         this.menu = menu;
+    }
+
+    /* ===============================================================
+       SPEED CONTROL (OP GUI)
+       =============================================================== */
+
+    public int getTickInterval() {
+        return tickInterval;
+    }
+
+    public void setTickInterval(int newInterval) {
+        int clamped = Math.max(1, Math.min(20, newInterval)); // 1..20 ticks
+        if (this.tickInterval == clamped) return;
+
+        this.tickInterval = clamped;
+
+        // Restart task to apply immediately
+        if (tickTask != null) {
+            restart();
+        }
     }
 
     /* ===============================================================
@@ -39,10 +61,10 @@ public final class HopperFiltersListener implements Listener {
     public void start() {
         if (tickTask != null) return;
 
-        // Bootstrap enabled set once at enable (optional but recommended)
+        // Helps avoid “doesn’t work until re-toggle after reboot”
         data.bootstrapEnabledFromLoadedChunks();
 
-        tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+        tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, tickInterval, tickInterval);
     }
 
     public void stop() {
@@ -50,6 +72,11 @@ public final class HopperFiltersListener implements Listener {
             tickTask.cancel();
             tickTask = null;
         }
+    }
+
+    private void restart() {
+        stop();
+        start();
     }
 
     /* ===============================================================
@@ -138,7 +165,6 @@ public final class HopperFiltersListener implements Listener {
         if (!(event.getInventory().getHolder() instanceof Hopper hopper)) return;
         if (!data.isEnabled(hopper.getBlock())) return;
 
-        // allow viewing, forbid all interactions
         event.setCancelled(true);
     }
 
@@ -156,14 +182,12 @@ public final class HopperFiltersListener implements Listener {
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onMove(InventoryMoveItemEvent event) {
-        // If destination is enabled filtered hopper -> cancel
         if (event.getDestination().getHolder() instanceof Hopper dest) {
             if (data.isEnabled(dest.getBlock())) {
                 event.setCancelled(true);
                 return;
             }
         }
-        // If initiator is enabled filtered hopper -> cancel
         if (event.getInitiator().getHolder() instanceof Hopper initiator) {
             if (data.isEnabled(initiator.getBlock())) {
                 event.setCancelled(true);
@@ -198,13 +222,13 @@ public final class HopperFiltersListener implements Listener {
             Inventory hopperInv = hopperState.getInventory();
             if (hopperInv == null) continue;
 
-            // 1) Purge junk from hopper inventory (return to any feeding container else delete)
+            // 1) Purge junk from hopper
             purgeHopper(b, hopperInv);
 
-            // 2) Push 1 allowed item out (per tick)
+            // 2) Push 1 allowed item out
             pushOne(b, hopperInv);
 
-            // 3) Pull 1 allowed item in (per tick)
+            // 3) Pull 1 allowed item in
             pullOne(b, hopperInv);
         }
     }
@@ -240,10 +264,6 @@ public final class HopperFiltersListener implements Listener {
         return false;
     }
 
-    /**
-     * Feeding containers = above + all 4 sides if they are Container.
-     * (Matches your requirement exactly.)
-     */
     private List<Container> getFeedingContainers(Block hopperBlock) {
         List<Container> out = new ArrayList<>();
         addIfContainer(hopperBlock.getRelative(0, 1, 0), out);
@@ -271,17 +291,13 @@ public final class HopperFiltersListener implements Listener {
         Inventory destInv = destContainer.getInventory();
         if (destInv == null) return;
 
-        // Find first allowed item in hopper and move 1 to dest
         for (int i = 0; i < hopperInv.getSize(); i++) {
             ItemStack it = hopperInv.getItem(i);
             if (it == null || it.getType() == Material.AIR) continue;
 
             String key = it.getType().getKey().toString();
-
-            // Must be allowed by this hopper
             if (!data.allows(hopperBlock, key)) continue;
 
-            // If destination is an enabled filtered hopper, it must allow it too
             if (destContainer instanceof Hopper destHopper) {
                 Block destHopperBlock = destHopper.getBlock();
                 if (data.isEnabled(destHopperBlock) && !data.allows(destHopperBlock, key)) {
@@ -292,7 +308,7 @@ public final class HopperFiltersListener implements Listener {
             ItemStack one = it.clone();
             one.setAmount(1);
 
-            if (!destInv.addItem(one).isEmpty()) return; // can't fit
+            if (!destInv.addItem(one).isEmpty()) return;
 
             decrementSlot(hopperInv, i, it);
             return;
@@ -310,12 +326,10 @@ public final class HopperFiltersListener implements Listener {
        =============================================================== */
 
     private void pullOne(Block hopperBlock, Inventory hopperInv) {
-        // We pull from "feeding containers" as you requested (above + sides).
         for (Container source : getFeedingContainers(hopperBlock)) {
             Inventory srcInv = source.getInventory();
             if (srcInv == null) continue;
 
-            // Find first item in source that is allowed by this hopper
             for (int slot = 0; slot < srcInv.getSize(); slot++) {
                 ItemStack it = srcInv.getItem(slot);
                 if (it == null || it.getType() == Material.AIR) continue;
@@ -326,9 +340,8 @@ public final class HopperFiltersListener implements Listener {
                 ItemStack one = it.clone();
                 one.setAmount(1);
 
-                // Try to add to hopper (will stack or occupy empty slot)
                 if (!hopperInv.addItem(one).isEmpty()) {
-                    return; // hopper cannot accept anything right now
+                    return;
                 }
 
                 decrementSlot(srcInv, slot, it);
