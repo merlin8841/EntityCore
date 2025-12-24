@@ -48,7 +48,7 @@ public final class HopperFiltersMenu {
         // Fill 25 filter slots
         List<String> filters = data.getFilters(hopperBlock);
         for (int i = FILTER_START; i <= FILTER_END; i++) {
-            String key = filters.get(i);
+            String key = (i < filters.size()) ? filters.get(i) : "";
             if (key == null || key.isBlank()) {
                 inv.setItem(i, null);
                 continue;
@@ -73,14 +73,51 @@ public final class HopperFiltersMenu {
         player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
-    public void save(Player player, Inventory inv) {
+    /**
+     * Persist filter slots to the hopper WITHOUT closing the editor session.
+     * This is crucial for Bedrock UI / partial-close quirks.
+     */
+    public void persist(Player player, Inventory inv) {
         if (player == null || inv == null) return;
 
         Block hopper = getEditingHopper(player);
-        openEditors.remove(player.getUniqueId());
-
         if (hopper == null || !data.isHopperBlock(hopper)) return;
 
+        List<String> filters = buildFiltersFromInventory(inv);
+        data.setFilters(hopper, filters);
+    }
+
+    /**
+     * Save and end editing session (called on inventory close).
+     */
+    public void saveAndClose(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
+
+        // Persist first
+        persist(player, inv);
+
+        // Then end editing session
+        openEditors.remove(player.getUniqueId());
+    }
+
+    public void toggle(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
+
+        Block hopper = getEditingHopper(player);
+        if (hopper == null) return;
+
+        // Persist current filter layout BEFORE toggling, so data is never "empty" due to UI quirks
+        persist(player, inv);
+
+        boolean now = !data.isEnabled(hopper);
+        data.setEnabled(hopper, now);
+
+        inv.setItem(SLOT_TOGGLE, toggleItem(now));
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+        player.sendMessage(now ? "§aHopper filter enabled." : "§cHopper filter disabled.");
+    }
+
+    private List<String> buildFiltersFromInventory(Inventory inv) {
         List<String> filters = new ArrayList<>(Collections.nCopies(HopperFilterData.FILTER_SLOTS, ""));
 
         for (int i = FILTER_START; i <= FILTER_END; i++) {
@@ -92,21 +129,7 @@ public final class HopperFiltersMenu {
             filters.set(i, it.getType().getKey().toString());
         }
 
-        data.setFilters(hopper, filters);
-    }
-
-    public void toggle(Player player, Inventory inv) {
-        if (player == null || inv == null) return;
-
-        Block hopper = getEditingHopper(player);
-        if (hopper == null) return;
-
-        boolean now = !data.isEnabled(hopper);
-        data.setEnabled(hopper, now);
-
-        inv.setItem(SLOT_TOGGLE, toggleItem(now));
-        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-        player.sendMessage(now ? "§aHopper filter enabled." : "§cHopper filter disabled.");
+        return filters;
     }
 
     private ItemStack toggleItem(boolean enabled) {
@@ -133,11 +156,8 @@ public final class HopperFiltersMenu {
     private Material materialFromKey(String key) {
         if (key == null || key.isBlank()) return null;
 
-        // key typically "minecraft:stone"
         String s = key;
         if (s.startsWith("minecraft:")) s = s.substring("minecraft:".length());
-
-        // Material enum names are upper-case
         s = s.toUpperCase(Locale.ROOT);
 
         return Material.matchMaterial(s);
