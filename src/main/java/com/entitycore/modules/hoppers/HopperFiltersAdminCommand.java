@@ -1,0 +1,37 @@
+package com.entitycore.modules.hoppers;
+
+import org.bukkit.command.*;
+import org.bukkit.entity.Player;
+
+import java.util.Collections;
+import java.util.List;
+
+public final class HopperFiltersAdminCommand implements CommandExecutor, TabCompleter {
+
+    private final HopperFiltersAdminMenu adminMenu;
+
+    public HopperFiltersAdminCommand(HopperFiltersAdminMenu adminMenu) {
+        this.adminMenu = adminMenu;
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("This command can only be used by players.");
+            return true;
+        }
+
+        if (!player.hasPermission("entitycore.hopperfilters.admin")) {
+            player.sendMessage("§cYou don't have permission to use this.");
+            return true;
+        }
+
+        adminMenu.open(player);
+        return true;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        return Collections.emptyList();
+    }
+}
