@@ -10,8 +10,13 @@ commands:
     description: Open hopper filter menu for the hopper you're looking at
     usage: /hf
     aliases: [hopperfilter, hopper-filter, hopperfilters, hopper-filters]
+  hfadmin:
+    description: Opens HopperFilters operator settings.
+    usage: /hfadmin
 
 permissions:
   entitycore.hopperfilters.use:
     description: Allows using hopper filters
     default: true
+  entitycore.hopperfilters.admin:
+    default: op
