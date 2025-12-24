@@ -1,22 +1,22 @@
 package com.entitycore.modules.hoppers;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
+import org.bukkit.block.Container;
 import org.bukkit.block.Hopper;
+import org.bukkit.block.data.Directional;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.event.inventory.InventoryDragEvent;
-import org.bukkit.event.inventory.InventoryMoveItemEvent;
-import org.bukkit.event.inventory.InventoryPickupItemEvent;
+import org.bukkit.event.inventory.*;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.util.Vector;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 public final class HopperFiltersListener implements Listener {
 
@@ -24,7 +24,7 @@ public final class HopperFiltersListener implements Listener {
     private final HopperFilterData data;
     private final HopperFiltersMenu menu;
 
-    private final Map<String, Long> hopperTickGate = new HashMap<>();
+    private BukkitTask tickTask;
 
     public HopperFiltersListener(JavaPlugin plugin, HopperFilterData data, HopperFiltersMenu menu) {
         this.plugin = plugin;
@@ -33,7 +33,27 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       GUI
+       LIFECYCLE
+       =============================================================== */
+
+    public void start() {
+        if (tickTask != null) return;
+
+        // Bootstrap enabled set once at enable (optional but recommended)
+        data.bootstrapEnabledFromLoadedChunks();
+
+        tickTask = Bukkit.getScheduler().runTaskTimer(plugin, this::tick, 1L, 1L);
+    }
+
+    public void stop() {
+        if (tickTask != null) {
+            tickTask.cancel();
+            tickTask = null;
+        }
+    }
+
+    /* ===============================================================
+       FILTER UI EVENTS (COMMAND-OPENED)
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -70,7 +90,7 @@ public final class HopperFiltersListener implements Listener {
         }
 
         if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
-            plugin.getServer().getScheduler().runTask(plugin, () -> menu.persist(p, top));
+            Bukkit.getScheduler().runTask(plugin, () -> menu.persist(p, top));
         }
     }
 
@@ -93,7 +113,7 @@ public final class HopperFiltersListener implements Listener {
         }
 
         if (event.getWhoClicked() instanceof org.bukkit.entity.Player p) {
-            plugin.getServer().getScheduler().runTask(plugin, () -> menu.persist(p, top));
+            Bukkit.getScheduler().runTask(plugin, () -> menu.persist(p, top));
         }
     }
 
@@ -110,166 +130,219 @@ public final class HopperFiltersListener implements Listener {
     }
 
     /* ===============================================================
-       HOPPER CONTROL
-       - Only when toggle ON for this hopper
-       - OFF => do nothing (vanilla)
+       READ-ONLY HOPPER GUI WHEN FILTER ENABLED
        =============================================================== */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onHopperMove(InventoryMoveItemEvent event) {
-        if (!(event.getInitiator().getHolder() instanceof Hopper initiatorHopper)) return;
+    public void onHopperGuiClick(InventoryClickEvent event) {
+        if (!(event.getInventory().getHolder() instanceof Hopper hopper)) return;
+        if (!data.isEnabled(hopper.getBlock())) return;
 
-        Block hopperBlock = initiatorHopper.getBlock();
-        if (hopperBlock.getType() != Material.HOPPER) return;
-
-        // If toggle OFF => vanilla
-        if (!data.isEnabled(hopperBlock)) return;
-
-        if (isGated(hopperBlock)) return;
-        gate(hopperBlock);
-
+        // allow viewing, forbid all interactions
         event.setCancelled(true);
-
-        Inventory source = event.getSource();
-        Inventory dest = event.getDestination();
-        if (source == null || dest == null) return;
-
-        plugin.getServer().getScheduler().runTask(plugin, () -> {
-            if (hopperBlock.getType() != Material.HOPPER) return;
-            if (!(hopperBlock.getState() instanceof Hopper liveHopper)) return;
-
-            Inventory hopperInv = liveHopper.getInventory();
-            if (hopperInv == null) return;
-
-            boolean destIsThisHopper = isSameHopper(dest, hopperBlock);
-
-            if (destIsThisHopper) {
-                pullOneAllowedIntoHopper(source, hopperInv, hopperBlock);
-            } else {
-                pushOneAllowedOutOfHopper(hopperInv, dest, hopperBlock);
-            }
-        });
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onHopperPickup(InventoryPickupItemEvent event) {
+    public void onHopperGuiDrag(InventoryDragEvent event) {
         if (!(event.getInventory().getHolder() instanceof Hopper hopper)) return;
-
-        Block hopperBlock = hopper.getBlock();
-        if (hopperBlock.getType() != Material.HOPPER) return;
-
-        // OFF => vanilla pickup
-        if (!data.isEnabled(hopperBlock)) return;
-
-        if (isGated(hopperBlock)) return;
-        gate(hopperBlock);
-
-        if (event.getItem() == null) return;
-        ItemStack stack = event.getItem().getItemStack();
-        if (stack == null || stack.getType() == Material.AIR) return;
-
-        String key = stack.getType().getKey().toString();
-        if (!data.allows(hopperBlock, key)) {
-            event.setCancelled(true);
-            return;
-        }
+        if (!data.isEnabled(hopper.getBlock())) return;
 
         event.setCancelled(true);
-
-        ItemStack one = stack.clone();
-        one.setAmount(1);
-
-        Map<Integer, ItemStack> leftovers = event.getInventory().addItem(one);
-        if (!leftovers.isEmpty()) return;
-
-        int amt = stack.getAmount();
-        if (amt <= 1) {
-            event.getItem().remove();
-        } else {
-            stack.setAmount(amt - 1);
-            event.getItem().setItemStack(stack);
-        }
     }
 
-    private void pullOneAllowedIntoHopper(Inventory source, Inventory hopperInv, Block hopperBlock) {
-        if (source == null || hopperInv == null) return;
+    /* ===============================================================
+       BLOCK VANILLA TRANSFERS WHEN FILTER ENABLED
+       =============================================================== */
 
-        for (int i = 0; i < source.getSize(); i++) {
-            ItemStack it = source.getItem(i);
-            if (it == null || it.getType() == Material.AIR) continue;
-
-            String key = it.getType().getKey().toString();
-            if (!data.allows(hopperBlock, key)) continue;
-
-            ItemStack one = it.clone();
-            one.setAmount(1);
-
-            Map<Integer, ItemStack> leftovers = hopperInv.addItem(one);
-            if (!leftovers.isEmpty()) return;
-
-            int amt = it.getAmount();
-            if (amt <= 1) source.setItem(i, null);
-            else {
-                it.setAmount(amt - 1);
-                source.setItem(i, it);
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onMove(InventoryMoveItemEvent event) {
+        // If destination is enabled filtered hopper -> cancel
+        if (event.getDestination().getHolder() instanceof Hopper dest) {
+            if (data.isEnabled(dest.getBlock())) {
+                event.setCancelled(true);
+                return;
             }
-            return;
+        }
+        // If initiator is enabled filtered hopper -> cancel
+        if (event.getInitiator().getHolder() instanceof Hopper initiator) {
+            if (data.isEnabled(initiator.getBlock())) {
+                event.setCancelled(true);
+            }
         }
     }
 
-    private void pushOneAllowedOutOfHopper(Inventory hopperInv, Inventory dest, Block hopperBlock) {
-        if (hopperInv == null || dest == null) return;
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPickup(InventoryPickupItemEvent event) {
+        if (!(event.getInventory().getHolder() instanceof Hopper hopper)) return;
+        if (data.isEnabled(hopper.getBlock())) {
+            event.setCancelled(true);
+        }
+    }
 
+    /* ===============================================================
+       TICK LOOP: PURGE + CUSTOM MOVE
+       =============================================================== */
+
+    private void tick() {
+        List<String> keys = data.enabledKeysSnapshot();
+        if (keys.isEmpty()) return;
+
+        for (String key : keys) {
+            Block b = data.resolveKey(key);
+            if (b == null) continue;
+            if (!data.isHopperBlock(b)) continue;
+            if (!data.isEnabled(b)) continue;
+
+            if (!(b.getState() instanceof Hopper hopperState)) continue;
+
+            Inventory hopperInv = hopperState.getInventory();
+            if (hopperInv == null) continue;
+
+            // 1) Purge junk from hopper inventory (return to any feeding container else delete)
+            purgeHopper(b, hopperInv);
+
+            // 2) Push 1 allowed item out (per tick)
+            pushOne(b, hopperInv);
+
+            // 3) Pull 1 allowed item in (per tick)
+            pullOne(b, hopperInv);
+        }
+    }
+
+    /* ===============================================================
+       PURGE
+       =============================================================== */
+
+    private void purgeHopper(Block hopperBlock, Inventory hopperInv) {
+        for (int slot = 0; slot < hopperInv.getSize(); slot++) {
+            ItemStack item = hopperInv.getItem(slot);
+            if (item == null || item.getType() == Material.AIR) continue;
+
+            String matKey = item.getType().getKey().toString();
+            if (data.allows(hopperBlock, matKey)) continue;
+
+            ItemStack toReturn = item.clone();
+            hopperInv.setItem(slot, null);
+
+            boolean returned = tryReturnToAnyFeedingContainer(hopperBlock, toReturn);
+            if (!returned) {
+                // Delete by design
+            }
+        }
+    }
+
+    private boolean tryReturnToAnyFeedingContainer(Block hopperBlock, ItemStack stack) {
+        for (Container c : getFeedingContainers(hopperBlock)) {
+            Inventory inv = c.getInventory();
+            if (inv == null) continue;
+            if (inv.addItem(stack).isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Feeding containers = above + all 4 sides if they are Container.
+     * (Matches your requirement exactly.)
+     */
+    private List<Container> getFeedingContainers(Block hopperBlock) {
+        List<Container> out = new ArrayList<>();
+        addIfContainer(hopperBlock.getRelative(0, 1, 0), out);
+        addIfContainer(hopperBlock.getRelative(1, 0, 0), out);
+        addIfContainer(hopperBlock.getRelative(-1, 0, 0), out);
+        addIfContainer(hopperBlock.getRelative(0, 0, 1), out);
+        addIfContainer(hopperBlock.getRelative(0, 0, -1), out);
+        return out;
+    }
+
+    private void addIfContainer(Block block, List<Container> out) {
+        if (block == null) return;
+        if (block.getState() instanceof Container c) out.add(c);
+    }
+
+    /* ===============================================================
+       CUSTOM OUTFLOW
+       =============================================================== */
+
+    private void pushOne(Block hopperBlock, Inventory hopperInv) {
+        Block destBlock = getHopperFacingTarget(hopperBlock);
+        if (destBlock == null) return;
+
+        if (!(destBlock.getState() instanceof Container destContainer)) return;
+        Inventory destInv = destContainer.getInventory();
+        if (destInv == null) return;
+
+        // Find first allowed item in hopper and move 1 to dest
         for (int i = 0; i < hopperInv.getSize(); i++) {
             ItemStack it = hopperInv.getItem(i);
             if (it == null || it.getType() == Material.AIR) continue;
 
             String key = it.getType().getKey().toString();
+
+            // Must be allowed by this hopper
             if (!data.allows(hopperBlock, key)) continue;
 
-            if (dest.getHolder() instanceof Hopper destHopper) {
-                Block destBlock = destHopper.getBlock();
-                // If destination hopper has filter ON, respect it. If OFF, allow all.
-                if (data.isEnabled(destBlock) && !data.allows(destBlock, key)) continue;
+            // If destination is an enabled filtered hopper, it must allow it too
+            if (destContainer instanceof Hopper destHopper) {
+                Block destHopperBlock = destHopper.getBlock();
+                if (data.isEnabled(destHopperBlock) && !data.allows(destHopperBlock, key)) {
+                    continue;
+                }
             }
 
             ItemStack one = it.clone();
             one.setAmount(1);
 
-            Map<Integer, ItemStack> leftovers = dest.addItem(one);
-            if (!leftovers.isEmpty()) return;
+            if (!destInv.addItem(one).isEmpty()) return; // can't fit
 
-            int amt = it.getAmount();
-            if (amt <= 1) hopperInv.setItem(i, null);
-            else {
-                it.setAmount(amt - 1);
-                hopperInv.setItem(i, it);
-            }
+            decrementSlot(hopperInv, i, it);
             return;
         }
     }
 
-    private boolean isSameHopper(Inventory inv, Block hopperBlock) {
-        if (inv == null || hopperBlock == null) return false;
-        if (!(inv.getHolder() instanceof Hopper h)) return false;
-        Block b = h.getBlock();
-        return b.getWorld().equals(hopperBlock.getWorld())
-                && b.getX() == hopperBlock.getX()
-                && b.getY() == hopperBlock.getY()
-                && b.getZ() == hopperBlock.getZ();
+    private Block getHopperFacingTarget(Block hopperBlock) {
+        if (hopperBlock == null) return null;
+        if (!(hopperBlock.getBlockData() instanceof Directional dir)) return null;
+        return hopperBlock.getRelative(dir.getFacing());
     }
 
-    private String gateKey(Block hopperBlock) {
-        return hopperBlock.getWorld().getUID() + ":" + hopperBlock.getX() + ":" + hopperBlock.getY() + ":" + hopperBlock.getZ();
+    /* ===============================================================
+       CUSTOM INTAKE
+       =============================================================== */
+
+    private void pullOne(Block hopperBlock, Inventory hopperInv) {
+        // We pull from "feeding containers" as you requested (above + sides).
+        for (Container source : getFeedingContainers(hopperBlock)) {
+            Inventory srcInv = source.getInventory();
+            if (srcInv == null) continue;
+
+            // Find first item in source that is allowed by this hopper
+            for (int slot = 0; slot < srcInv.getSize(); slot++) {
+                ItemStack it = srcInv.getItem(slot);
+                if (it == null || it.getType() == Material.AIR) continue;
+
+                String key = it.getType().getKey().toString();
+                if (!data.allows(hopperBlock, key)) continue;
+
+                ItemStack one = it.clone();
+                one.setAmount(1);
+
+                // Try to add to hopper (will stack or occupy empty slot)
+                if (!hopperInv.addItem(one).isEmpty()) {
+                    return; // hopper cannot accept anything right now
+                }
+
+                decrementSlot(srcInv, slot, it);
+                return;
+            }
+        }
     }
 
-    private boolean isGated(Block hopperBlock) {
-        Long tick = hopperTickGate.get(gateKey(hopperBlock));
-        long now = hopperBlock.getWorld().getFullTime();
-        return tick != null && tick == now;
-    }
-
-    private void gate(Block hopperBlock) {
-        hopperTickGate.put(gateKey(hopperBlock), hopperBlock.getWorld().getFullTime());
+    private void decrementSlot(Inventory inv, int slot, ItemStack current) {
+        int amt = current.getAmount();
+        if (amt <= 1) inv.setItem(slot, null);
+        else {
+            current.setAmount(amt - 1);
+            inv.setItem(slot, current);
+        }
     }
 }
