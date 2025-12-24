@@ -1,5 +1,6 @@
 package com.entitycore.modules.hoppers;
 
+import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.block.Block;
 import org.bukkit.block.TileState;
@@ -7,105 +8,155 @@ import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class HopperFilterData {
 
     public static final int FILTER_SLOTS = 25;
 
-    private final NamespacedKey keyEnabled;
-    private final NamespacedKey keyFilters; // stored as 25 entries joined by ';'
+    private final NamespacedKey keyFilters;
+
+    /**
+     * Runtime cache to prevent any PDC timing/desync issues.
+     * Key: worldUUID:x:y:z
+     */
+    private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
 
     public HopperFilterData(JavaPlugin plugin) {
-        this.keyEnabled = new NamespacedKey(plugin, "hf_enabled");
         this.keyFilters = new NamespacedKey(plugin, "hf_filters");
     }
 
     public boolean isHopperBlock(Block block) {
-        return block != null && block.getType().name().equals("HOPPER");
-    }
-
-    public boolean isEnabled(Block hopperBlock) {
-        TileState tile = getTile(hopperBlock);
-        if (tile == null) return false;
-        PersistentDataContainer pdc = tile.getPersistentDataContainer();
-        Byte b = pdc.get(keyEnabled, PersistentDataType.BYTE);
-        return b != null && b == (byte) 1;
-    }
-
-    public void setEnabled(Block hopperBlock, boolean enabled) {
-        TileState tile = getTile(hopperBlock);
-        if (tile == null) return;
-        PersistentDataContainer pdc = tile.getPersistentDataContainer();
-        pdc.set(keyEnabled, PersistentDataType.BYTE, enabled ? (byte) 1 : (byte) 0);
-        tile.update(true);
+        return block != null
+                && block.getType() == Material.HOPPER
+                && block.getState() instanceof TileState;
     }
 
     /**
-     * Returns 25 entries (size always = FILTER_SLOTS).
-     * Each entry is either "" (empty) or a material key string like "minecraft:stone".
+     * Always treated as enabled by design now.
+     */
+    public boolean isEnabled(Block hopperBlock) {
+        return isHopperBlock(hopperBlock);
+    }
+
+    /**
+     * Disabled on purpose (strict design): filter cannot be toggled off.
+     */
+    public void setEnabled(Block hopperBlock, boolean enabled) {
+        // no-op by design
+    }
+
+    /**
+     * Returns 25-length list of namespaced keys ("minecraft:dirt") or "".
      */
     public List<String> getFilters(Block hopperBlock) {
-        TileState tile = getTile(hopperBlock);
-        if (tile == null) return emptyFilters();
-
-        PersistentDataContainer pdc = tile.getPersistentDataContainer();
-        String raw = pdc.get(keyFilters, PersistentDataType.STRING);
-        if (raw == null || raw.isBlank()) return emptyFilters();
-
-        String[] parts = raw.split(";", -1);
-        List<String> out = new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
-        for (int i = 0; i < Math.min(parts.length, FILTER_SLOTS); i++) {
-            out.set(i, parts[i] == null ? "" : parts[i]);
+        if (!isHopperBlock(hopperBlock)) {
+            return new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
         }
-        return out;
+
+        CacheEntry ce = cache.get(locKey(hopperBlock));
+        if (ce != null && ce.filters != null) {
+            return new ArrayList<>(ce.filters);
+        }
+
+        CacheEntry loaded = loadFromPdc(hopperBlock);
+        cache.put(locKey(hopperBlock), loaded);
+        return new ArrayList<>(loaded.filters);
     }
 
-    public void setFilters(Block hopperBlock, List<String> filters25) {
-        TileState tile = getTile(hopperBlock);
-        if (tile == null) return;
+    public void setFilters(Block hopperBlock, List<String> filters) {
+        if (!isHopperBlock(hopperBlock)) return;
 
-        List<String> fixed = new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
-        for (int i = 0; i < Math.min(filters25.size(), FILTER_SLOTS); i++) {
-            fixed.set(i, filters25.get(i) == null ? "" : filters25.get(i));
+        List<String> normalized = new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
+        if (filters != null) {
+            for (int i = 0; i < FILTER_SLOTS && i < filters.size(); i++) {
+                normalized.set(i, normalizeKey(filters.get(i)));
+            }
         }
 
-        String joined = String.join(";", fixed);
-        PersistentDataContainer pdc = tile.getPersistentDataContainer();
-        pdc.set(keyFilters, PersistentDataType.STRING, joined);
-        tile.update(true);
+        String k = locKey(hopperBlock);
+        CacheEntry ce = cache.computeIfAbsent(k, kk -> new CacheEntry());
+        ce.filters = normalized;
+        ce.recomputeAllowed();
+
+        // Persist to PDC for restarts
+        TileState state = (TileState) hopperBlock.getState();
+        PersistentDataContainer pdc = state.getPersistentDataContainer();
+        pdc.set(keyFilters, PersistentDataType.STRING, String.join("|", normalized));
+        state.update(true, false);
     }
 
     /**
-     * Whitelist behavior:
-     * - If enabled=false -> allow everything
-     * - If enabled=true and filter list empty -> allow everything
-     * - If enabled=true and filter list has items -> allow only those materials
+     * STRICT whitelist:
+     * - If item is not in the filter slots, it is NOT allowed.
+     * - Empty filter list => NOTHING is allowed.
      */
     public boolean allows(Block hopperBlock, String materialKey) {
-        if (materialKey == null || materialKey.isBlank()) return true;
+        if (!isHopperBlock(hopperBlock)) return true;
 
-        if (!isEnabled(hopperBlock)) return true;
-
-        List<String> filters = getFilters(hopperBlock);
-        boolean any = filters.stream().anyMatch(s -> s != null && !s.isBlank());
-        if (!any) return true;
-
-        for (String f : filters) {
-            if (f != null && !f.isBlank() && f.equals(materialKey)) return true;
+        CacheEntry ce = cache.get(locKey(hopperBlock));
+        if (ce == null) {
+            ce = loadFromPdc(hopperBlock);
+            cache.put(locKey(hopperBlock), ce);
         }
-        return false;
+
+        String key = normalizeKey(materialKey);
+        if (key.isBlank()) return false;
+
+        // STRICT: empty allowedSet means allow nothing
+        if (ce.allowedSet.isEmpty()) return false;
+
+        return ce.allowedSet.contains(key);
     }
 
-    private TileState getTile(Block block) {
-        if (block == null) return null;
-        if (!(block.getState() instanceof TileState tile)) return null;
-        return tile;
+    private CacheEntry loadFromPdc(Block hopperBlock) {
+        CacheEntry ce = new CacheEntry();
+
+        TileState state = (TileState) hopperBlock.getState();
+        PersistentDataContainer pdc = state.getPersistentDataContainer();
+
+        String raw = pdc.get(keyFilters, PersistentDataType.STRING);
+        List<String> list = new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
+
+        if (raw != null && !raw.isBlank()) {
+            String[] parts = raw.split("\\|", -1);
+            for (int i = 0; i < FILTER_SLOTS && i < parts.length; i++) {
+                list.set(i, normalizeKey(parts[i]));
+            }
+        }
+
+        ce.filters = list;
+        ce.recomputeAllowed();
+        return ce;
     }
 
-    private List<String> emptyFilters() {
-        return new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
+    private String locKey(Block b) {
+        return b.getWorld().getUID() + ":" + b.getX() + ":" + b.getY() + ":" + b.getZ();
+    }
+
+    private String normalizeKey(String key) {
+        if (key == null) return "";
+        String s = key.trim();
+        if (s.isEmpty()) return "";
+        s = s.toLowerCase(Locale.ROOT);
+
+        if (!s.contains(":")) s = "minecraft:" + s;
+        return s;
+    }
+
+    private static final class CacheEntry {
+        List<String> filters = new ArrayList<>(Collections.nCopies(FILTER_SLOTS, ""));
+        Set<String> allowedSet = new HashSet<>();
+
+        void recomputeAllowed() {
+            allowedSet.clear();
+            if (filters == null) return;
+            for (String f : filters) {
+                if (f == null) continue;
+                String s = f.trim();
+                if (!s.isEmpty()) allowedSet.add(s);
+            }
+        }
     }
 }
