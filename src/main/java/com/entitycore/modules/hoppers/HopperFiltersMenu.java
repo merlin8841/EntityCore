@@ -22,15 +22,10 @@ public final class HopperFiltersMenu {
 
     private final HopperFilterData data;
 
-    // Tracks which hopper a player is editing
     private final Map<UUID, HopperRef> openEditors = new HashMap<>();
 
     public HopperFiltersMenu(HopperFilterData data) {
         this.data = data;
-    }
-
-    public boolean isEditing(Player player) {
-        return player != null && openEditors.containsKey(player.getUniqueId());
     }
 
     public Block getEditingHopper(Player player) {
@@ -45,7 +40,6 @@ public final class HopperFiltersMenu {
 
         Inventory inv = Bukkit.createInventory(player, SIZE, TITLE);
 
-        // Fill 25 filter slots
         List<String> filters = data.getFilters(hopperBlock);
         for (int i = FILTER_START; i <= FILTER_END; i++) {
             String key = (i < filters.size()) ? filters.get(i) : "";
@@ -63,7 +57,6 @@ public final class HopperFiltersMenu {
             inv.setItem(i, new ItemStack(mat, 1));
         }
 
-        // Buttons
         inv.setItem(SLOT_TOGGLE, toggleItem(data.isEnabled(hopperBlock)));
         inv.setItem(SLOT_CLOSE, closeItem());
 
@@ -73,51 +66,12 @@ public final class HopperFiltersMenu {
         player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
-    /**
-     * Persist filter slots to the hopper WITHOUT closing the editor session.
-     * This is crucial for Bedrock UI / partial-close quirks.
-     */
     public void persist(Player player, Inventory inv) {
         if (player == null || inv == null) return;
 
         Block hopper = getEditingHopper(player);
         if (hopper == null || !data.isHopperBlock(hopper)) return;
 
-        List<String> filters = buildFiltersFromInventory(inv);
-        data.setFilters(hopper, filters);
-    }
-
-    /**
-     * Save and end editing session (called on inventory close).
-     */
-    public void saveAndClose(Player player, Inventory inv) {
-        if (player == null || inv == null) return;
-
-        // Persist first
-        persist(player, inv);
-
-        // Then end editing session
-        openEditors.remove(player.getUniqueId());
-    }
-
-    public void toggle(Player player, Inventory inv) {
-        if (player == null || inv == null) return;
-
-        Block hopper = getEditingHopper(player);
-        if (hopper == null) return;
-
-        // Persist current filter layout BEFORE toggling, so data is never "empty" due to UI quirks
-        persist(player, inv);
-
-        boolean now = !data.isEnabled(hopper);
-        data.setEnabled(hopper, now);
-
-        inv.setItem(SLOT_TOGGLE, toggleItem(now));
-        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-        player.sendMessage(now ? "§aHopper filter enabled." : "§cHopper filter disabled.");
-    }
-
-    private List<String> buildFiltersFromInventory(Inventory inv) {
         List<String> filters = new ArrayList<>(Collections.nCopies(HopperFilterData.FILTER_SLOTS, ""));
 
         for (int i = FILTER_START; i <= FILTER_END; i++) {
@@ -129,7 +83,30 @@ public final class HopperFiltersMenu {
             filters.set(i, it.getType().getKey().toString());
         }
 
-        return filters;
+        data.setFilters(hopper, filters);
+    }
+
+    public void saveAndClose(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
+        persist(player, inv);
+        openEditors.remove(player.getUniqueId());
+    }
+
+    public void toggle(Player player, Inventory inv) {
+        if (player == null || inv == null) return;
+
+        Block hopper = getEditingHopper(player);
+        if (hopper == null) return;
+
+        // Persist current filters first
+        persist(player, inv);
+
+        boolean now = !data.isEnabled(hopper);
+        data.setEnabled(hopper, now);
+
+        inv.setItem(SLOT_TOGGLE, toggleItem(now));
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+        player.sendMessage(now ? "§aHopper filter enabled." : "§7Hopper filter disabled (vanilla).");
     }
 
     private ItemStack toggleItem(boolean enabled) {
@@ -137,7 +114,10 @@ public final class HopperFiltersMenu {
         ItemMeta meta = it.getItemMeta();
         if (meta != null) {
             meta.setDisplayName(enabled ? "§aFilter: ON" : "§7Filter: OFF");
-            meta.setLore(List.of("§fWhitelist using slots 1-25.", "§7When empty, allows everything."));
+            meta.setLore(List.of(
+                    "§fON: strict whitelist (only items in slots 1-25).",
+                    "§7OFF: vanilla hopper behavior."
+            ));
             it.setItemMeta(meta);
         }
         return it;
@@ -163,9 +143,6 @@ public final class HopperFiltersMenu {
         return Material.matchMaterial(s);
     }
 
-    /**
-     * Simple persistent reference to a block.
-     */
     private static final class HopperRef {
         private final UUID worldId;
         private final int x, y, z;
