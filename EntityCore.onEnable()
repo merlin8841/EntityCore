@@ -1,1 +1,12 @@
-moduleManager.register(new HoppersModule());
+@Override
+public void onEnable() {
+    this.moduleManager = new ModuleManager(this);
+
+    // Hopper filters (existing, working)
+    moduleManager.register(new HopperFiltersModule());
+
+    // Extended Anvil (new)
+    moduleManager.register(new ExtendedAnvilModule());
+
+    moduleManager.loadModules();
+}
