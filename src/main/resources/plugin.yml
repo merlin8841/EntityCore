@@ -13,10 +13,17 @@ commands:
   hfadmin:
     description: Opens HopperFilters operator settings.
     usage: /hfadmin
+  eaadmin:
+    description: Opens ExtendedAnvil operator settings.
+    usage: /eaadmin
 
 permissions:
   entitycore.hopperfilters.use:
     description: Allows using hopper filters
     default: true
   entitycore.hopperfilters.admin:
+    default: op
+
+  entitycore.extendedanvil.admin:
+    description: Allows ExtendedAnvil operator settings
     default: op
