@@ -23,6 +23,9 @@ public final class ExtendedAnvilSessionManager {
 
     private final Map<UUID, GuiType> openGui = new HashMap<>();
 
+    // Track Caps page per player
+    private final Map<UUID, Integer> capsPage = new HashMap<>();
+
     public ExtendedAnvilSessionManager(JavaPlugin plugin,
                                       ExtendedAnvilConfig config,
                                       XpRefundService refundService,
@@ -32,6 +35,10 @@ public final class ExtendedAnvilSessionManager {
         this.refundService = refundService;
         this.costService = costService;
     }
+
+    /* =========================================================
+       OPEN MENUS
+       ========================================================= */
 
     public void openPlayerMenu(Player player) {
         Inventory inv = PlayerMenu.create(player);
@@ -59,14 +66,28 @@ public final class ExtendedAnvilSessionManager {
     }
 
     public void openCapsMenu(Player player) {
-        Inventory inv = CapsMenu.create(player, plugin, config, 0);
+        int page = capsPage.getOrDefault(player.getUniqueId(), 0);
+        Inventory inv = CapsMenu.create(player, plugin, config, page);
         openGui.put(player.getUniqueId(), GuiType.CAPS);
         player.openInventory(inv);
         player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
     }
 
+    private void setCapsPage(Player player, int page) {
+        capsPage.put(player.getUniqueId(), Math.max(0, page));
+    }
+
+    private int getCapsPage(Player player) {
+        return capsPage.getOrDefault(player.getUniqueId(), 0);
+    }
+
+    /* =========================================================
+       EVENTS
+       ========================================================= */
+
     public void handleClose(Player player, InventoryCloseEvent event) {
         openGui.remove(player.getUniqueId());
+        // keep capsPage remembered while server is running (nice QoL)
     }
 
     public void handleDrag(Player player, InventoryDragEvent event) {
@@ -148,7 +169,6 @@ public final class ExtendedAnvilSessionManager {
         if (raw == PlayerMenu.SLOT_OUTPUT) {
             event.setCancelled(true);
 
-            // If there's an output, clicking result should "craft"
             ItemStack out = top.getItem(PlayerMenu.SLOT_OUTPUT);
             if (out == null || out.getType() == Material.AIR) {
                 player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
@@ -166,7 +186,7 @@ public final class ExtendedAnvilSessionManager {
             return;
         }
 
-        // Inputs (0/1) are allowed; just refresh after the click applies
+        // Inputs (0/1) allowed; refresh after click applies
         Bukkit.getScheduler().runTask(plugin, () ->
                 PlayerMenu.refreshPreview(player, top, plugin, config, costService)
         );
@@ -306,7 +326,7 @@ public final class ExtendedAnvilSessionManager {
     }
 
     /* =========================================================
-       ADMIN MENUS (unchanged)
+       ADMIN MENUS (unchanged logic)
        ========================================================= */
 
     private void handleAdminMenuClick(Player player, InventoryClickEvent event) {
@@ -423,21 +443,40 @@ public final class ExtendedAnvilSessionManager {
         Inventory inv = event.getView().getTopInventory();
         int slot = event.getRawSlot();
 
+        int current = getCapsPage(player);
+
         if (slot == CapsMenu.SLOT_BACK) {
             openAdminMenu(player);
             return;
         }
 
-        CapsMenu.Click c = CapsMenu.getClicked(inv, slot, 0);
-        if (c == null) return;
+        CapsMenu.Click click = CapsMenu.getClicked(inv, slot, current);
+        if (click == null) return;
+
+        if (click.type == CapsMenu.ClickType.PAGE) {
+            setCapsPage(player, click.page);
+            CapsMenu.render(inv, plugin, config, getCapsPage(player));
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            return;
+        }
+
+        if (click.type == CapsMenu.ClickType.BACK) {
+            openAdminMenu(player);
+            return;
+        }
+
+        if (click.type != CapsMenu.ClickType.ENTRY || click.enchantKey == null) return;
 
         boolean shift = event.isShiftClick();
         boolean right = event.isRightClick();
 
         int delta = shift ? (right ? +10 : -10) : (right ? +1 : -1);
 
-        config.adjustCap(c.enchantKey, delta);
-        CapsMenu.render(inv, plugin, config, c.page);
+        config.adjustCap(click.enchantKey, delta);
+
+        // Re-render current page
+        CapsMenu.render(inv, plugin, config, current);
+        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
     }
 
     private enum GuiType {
