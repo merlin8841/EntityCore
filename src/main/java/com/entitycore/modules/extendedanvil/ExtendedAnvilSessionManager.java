@@ -80,4 +80,6 @@ public final class ExtendedAnvilSessionManager {
     public void openPriorityMenu(Player player) {
         PriorityMenu.open(player, config);
     }
+    public JavaPlugin getPlugin() {
+    return plugin;
 }
