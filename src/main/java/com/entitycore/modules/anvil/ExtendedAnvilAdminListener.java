@@ -1,138 +1,23 @@
 package com.entitycore.modules.anvil;
 
-import org.bukkit.Material;
 import org.bukkit.Sound;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.PrepareAnvilEvent;
-import org.bukkit.inventory.AnvilInventory;
-import org.bukkit.inventory.InventoryView;
-import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.EnchantmentStorageMeta;
-import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.*;
-
-public final class ExtendedAnvilListener implements Listener {
+public final class ExtendedAnvilAdminListener implements Listener {
 
     private final JavaPlugin plugin;
-    private final XpRefundService refundService;
+    private final ExtendedAnvilAdminMenu menu;
 
-    private final Map<Integer, Mode> modes = new HashMap<Integer, Mode>();
-
-    public ExtendedAnvilListener(JavaPlugin plugin, XpRefundService refundService) {
+    public ExtendedAnvilAdminListener(JavaPlugin plugin, ExtendedAnvilAdminMenu menu) {
         this.plugin = plugin;
-        this.refundService = refundService;
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onPrepare(PrepareAnvilEvent event) {
-        if (!(event.getInventory() instanceof AnvilInventory)) return;
-        AnvilInventory inv = (AnvilInventory) event.getInventory();
-
-        int key = System.identityHashCode(inv);
-        modes.remove(key);
-
-        ItemStack left = inv.getItem(0);
-        ItemStack right = inv.getItem(1);
-
-        if (left == null || left.getType() == Material.AIR) return;
-        if (right == null || right.getType() == Material.AIR) return;
-
-        // Block book+book entirely (prevents upgrading by combining books)
-        if (isEnchantedBook(left) && isEnchantedBook(right)) {
-            event.setResult(null);
-            inv.setRepairCost(0);
-            modes.put(key, Mode.BLOCKED);
-            return;
-        }
-
-        // DISENCHANT MODE: right is plain BOOK(s)
-        if (right.getType() == Material.BOOK) {
-            Map<Enchantment, Integer> current = new HashMap<Enchantment, Integer>(left.getEnchantments());
-            if (current.isEmpty()) {
-                event.setResult(null);
-                inv.setRepairCost(0);
-                return;
-            }
-
-            int books = Math.max(1, right.getAmount());
-            LinkedHashMap<Enchantment, Integer> extracted = (books == 1)
-                    ? extractAll(current)
-                    : extractOne(current);
-
-            if (extracted.isEmpty()) {
-                event.setResult(null);
-                inv.setRepairCost(0);
-                return;
-            }
-
-            event.setResult(buildEnchantedBook(extracted));
-            inv.setRepairCost(0);
-            modes.put(key, Mode.DISENCHANT);
-            return;
-        }
-
-        // APPLY BOOK MODE: right is enchanted book
-        if (isEnchantedBook(right) && !isBook(left)) {
-            Map<Enchantment, Integer> bookEnchants = getStoredEnchants(right);
-            if (bookEnchants.isEmpty()) return;
-
-            ItemStack result = left.clone();
-            ItemMeta meta = result.getItemMeta();
-            if (meta == null) return;
-
-            Map<Enchantment, Integer> existing = new HashMap<Enchantment, Integer>(result.getEnchantments());
-
-            int applied = 0;
-
-            for (Map.Entry<Enchantment, Integer> entry : bookEnchants.entrySet()) {
-                Enchantment ench = entry.getKey();
-                int level = entry.getValue();
-
-                if (ench == null) continue;
-                if (!ench.canEnchantItem(result)) continue;
-
-                // vanilla conflict rules
-                boolean conflict = false;
-                for (Enchantment ex : existing.keySet()) {
-                    if (ex.equals(ench)) continue;
-                    if (ex.conflictsWith(ench)) {
-                        conflict = true;
-                        break;
-                    }
-                }
-                if (conflict) continue;
-
-                // cap enforcement (OP-configurable)
-                int cappedLevel = applyCap(ench, level);
-                if (cappedLevel <= 0) continue; // cap 0 means blocked
-
-                int currentLevel = existing.containsKey(ench) ? existing.get(ench) : 0;
-                if (cappedLevel > currentLevel) {
-                    meta.addEnchant(ench, cappedLevel, false);
-                    existing.put(ench, cappedLevel);
-                    applied++;
-                }
-            }
-
-            if (applied == 0) {
-                event.setResult(null);
-                inv.setRepairCost(0);
-                modes.put(key, Mode.BLOCKED);
-                return;
-            }
-
-            result.setItemMeta(meta);
-            event.setResult(result);
-            inv.setRepairCost(Math.max(1, applied));
-            modes.put(key, Mode.APPLY_BOOK);
-        }
+        this.menu = menu;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -140,174 +25,229 @@ public final class ExtendedAnvilListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player)) return;
         Player player = (Player) event.getWhoClicked();
 
-        InventoryView view = event.getView();
-        if (!(view.getTopInventory() instanceof AnvilInventory)) return;
-        AnvilInventory inv = (AnvilInventory) view.getTopInventory();
-
-        if (event.getRawSlot() != 2) return; // result slot
-
-        int key = System.identityHashCode(inv);
-        Mode mode = modes.get(key);
-        if (mode == null) return;
-
-        if (mode == Mode.BLOCKED) {
-            event.setCancelled(true);
-            return;
-        }
-
-        if (mode != Mode.DISENCHANT) return;
-
-        ItemStack result = inv.getItem(2);
-        if (result == null || result.getType() == Material.AIR) return;
-
-        ItemStack left = inv.getItem(0);
-        ItemStack right = inv.getItem(1);
-
-        if (left == null || left.getType() == Material.AIR) return;
-        if (right == null || right.getType() != Material.BOOK) return;
+        String title = event.getView().getTitle();
+        if (!isEaTitle(title)) return;
 
         event.setCancelled(true);
 
-        Map<Enchantment, Integer> current = new HashMap<Enchantment, Integer>(left.getEnchantments());
-        if (current.isEmpty()) return;
+        if (!player.hasPermission("entitycore.extendedanvil.admin")) {
+            player.sendMessage("§cYou don't have permission to use this.");
+            player.closeInventory();
+            return;
+        }
 
-        int books = Math.max(1, right.getAmount());
-        LinkedHashMap<Enchantment, Integer> extracted = (books == 1)
-                ? extractAll(current)
-                : extractOne(current);
+        Inventory inv = event.getView().getTopInventory();
+        int raw = event.getRawSlot();
 
-        if (extracted.isEmpty()) return;
+        ExtendedAnvilAdminMenu.ViewState vs = menu.getState(player);
 
-        // cursor must be empty or stackable
-        ItemStack cursor = event.getCursor();
-        if (cursor != null && cursor.getType() != Material.AIR) {
-            if (!canStack(cursor, result)) {
-                player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+        // Close
+        if (raw == ExtendedAnvilAdminMenu.NAV_CLOSE || raw == ExtendedAnvilAdminMenu.MAIN_CLOSE) {
+            player.closeInventory();
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            return;
+        }
+
+        // Main menu buttons
+        if (ExtendedAnvilAdminMenu.TITLE_MAIN.equals(title)) {
+            if (raw == ExtendedAnvilAdminMenu.MAIN_REFUND) {
+                menu.openRefund(player);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+            if (raw == ExtendedAnvilAdminMenu.MAIN_CAPS) {
+                vs.page = 0;
+                vs.selectedKey = null;
+                menu.openCaps(player);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+            if (raw == ExtendedAnvilAdminMenu.MAIN_PRIO) {
+                vs.page = 0;
+                vs.selectedKey = null;
+                menu.openPriority(player);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+            return;
+        }
+
+        // Back to main
+        if (raw == ExtendedAnvilAdminMenu.NAV_BACK) {
+            menu.openMain(player);
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            return;
+        }
+
+        // Paging
+        if (raw == ExtendedAnvilAdminMenu.NAV_PREV) {
+            if (vs.page > 0) vs.page--;
+            reopenSame(player, vs);
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            return;
+        }
+        if (raw == ExtendedAnvilAdminMenu.NAV_NEXT) {
+            vs.page++;
+            reopenSame(player, vs);
+            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            return;
+        }
+
+        // Refund interactions
+        if (ExtendedAnvilAdminMenu.TITLE_REFUND.equals(title)) {
+            boolean changed = false;
+
+            if (raw == ExtendedAnvilAdminMenu.REF_FIRST_DOWN)  changed = menu.adjustRefund("extendedanvil.refund.first", -0.05);
+            if (raw == ExtendedAnvilAdminMenu.REF_FIRST_UP)    changed = menu.adjustRefund("extendedanvil.refund.first", +0.05);
+
+            if (raw == ExtendedAnvilAdminMenu.REF_SECOND_DOWN) changed = menu.adjustRefund("extendedanvil.refund.second", -0.05);
+            if (raw == ExtendedAnvilAdminMenu.REF_SECOND_UP)   changed = menu.adjustRefund("extendedanvil.refund.second", +0.05);
+
+            if (raw == ExtendedAnvilAdminMenu.REF_THIRD_DOWN)  changed = menu.adjustRefund("extendedanvil.refund.thirdPlus", -0.05);
+            if (raw == ExtendedAnvilAdminMenu.REF_THIRD_UP)    changed = menu.adjustRefund("extendedanvil.refund.thirdPlus", +0.05);
+
+            if (raw == ExtendedAnvilAdminMenu.REF_RESET) {
+                menu.resetRefund();
+                changed = true;
+            }
+
+            if (changed) {
+                menu.renderRefund(inv);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            }
+            return;
+        }
+
+        // Caps interactions
+        if (ExtendedAnvilAdminMenu.TITLE_CAPS.equals(title)) {
+            // selecting enchant from list
+            if (raw >= 0 && raw <= 44) {
+                if (event.getCurrentItem() != null && event.getCurrentItem().hasItemMeta()) {
+                    String name = event.getCurrentItem().getItemMeta().getDisplayName();
+                    // displayName is "§e<key>"
+                    String key = stripColorPrefix(name);
+                    if (key != null && key.contains(":")) {
+                        menu.selectCaps(player, key);
+                        menu.renderCaps(inv, vs);
+                        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                    }
+                }
+                return;
+            }
+
+            if (raw == ExtendedAnvilAdminMenu.CAPS_INC) {
+                menu.capInc(player);
+                menu.renderCaps(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+            if (raw == ExtendedAnvilAdminMenu.CAPS_DEC) {
+                menu.capDec(player);
+                menu.renderCaps(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+            if (raw == ExtendedAnvilAdminMenu.CAPS_RESET) {
+                menu.capReset(player);
+                menu.renderCaps(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+
+            return;
+        }
+
+        // Priority interactions
+        if (ExtendedAnvilAdminMenu.TITLE_PRIO.equals(title)) {
+            if (raw >= 0 && raw <= 44) {
+                if (event.getCurrentItem() != null && event.getCurrentItem().hasItemMeta()) {
+                    String name = event.getCurrentItem().getItemMeta().getDisplayName();
+                    // "§d#pos §fkey" -> split by space and take last part
+                    String key = extractKeyFromPriorityName(name);
+                    if (key != null && key.contains(":")) {
+                        menu.selectPriority(player, key);
+                        menu.renderPriority(inv, vs);
+                        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                    }
+                }
+                return;
+            }
+
+            if (raw == ExtendedAnvilAdminMenu.PRIO_UP) {
+                menu.prioMoveUp(player);
+                menu.renderPriority(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+
+            if (raw == ExtendedAnvilAdminMenu.PRIO_DOWN) {
+                menu.prioMoveDown(player);
+                menu.renderPriority(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+                return;
+            }
+
+            if (raw == ExtendedAnvilAdminMenu.PRIO_FIX) {
+                menu.prioAppendMissing();
+                menu.renderPriority(inv, vs);
+                player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
                 return;
             }
         }
+    }
 
-        // consume 1 book
-        if (right.getAmount() < 1) return;
-        right.setAmount(right.getAmount() - 1);
-        if (right.getAmount() <= 0) inv.setItem(1, null);
-        else inv.setItem(1, right);
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player)) return;
+        Player player = (Player) event.getPlayer();
 
-        // remove extracted enchants from item
-        ItemStack newLeft = left.clone();
-        ItemMeta meta = newLeft.getItemMeta();
-        if (meta == null) return;
+        String title = event.getView().getTitle();
+        if (!isEaTitle(title)) return;
 
-        for (Enchantment ench : extracted.keySet()) {
-            meta.removeEnchant(ench);
+        // Keep state around while menus are open; cleanup when they leave EA menus entirely:
+        // (best-effort: if they closed, remove state)
+        menu.forget(player);
+    }
+
+    private void reopenSame(Player player, ExtendedAnvilAdminMenu.ViewState vs) {
+        if (vs.screen == ExtendedAnvilAdminMenu.Screen.REFUND) {
+            menu.openRefund(player);
+            return;
         }
-        newLeft.setItemMeta(meta);
-        inv.setItem(0, newLeft);
-
-        // give enchanted book to cursor
-        if (cursor == null || cursor.getType() == Material.AIR) {
-            event.setCursor(result.clone());
-        } else {
-            cursor.setAmount(cursor.getAmount() + result.getAmount());
-            event.setCursor(cursor);
+        if (vs.screen == ExtendedAnvilAdminMenu.Screen.CAPS) {
+            menu.openCaps(player);
+            return;
         }
-
-        // clear result slot
-        inv.setItem(2, null);
-
-        // XP refund (diminishing returns tracked on item)
-        int refundedLevels = refundService.refundForRemoval(player, newLeft, extracted);
-        if (refundedLevels > 0) {
-            player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
-        } else {
-            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 0.7f, 1.0f);
+        if (vs.screen == ExtendedAnvilAdminMenu.Screen.PRIO) {
+            menu.openPriority(player);
+            return;
         }
-
-        player.updateInventory();
+        menu.openMain(player);
     }
 
-    private int applyCap(Enchantment ench, int level) {
-        String key = ench.getKey().toString();
-        int override = plugin.getConfig().getInt("extendedanvil.caps." + key, Integer.MIN_VALUE);
+    private boolean isEaTitle(String title) {
+        return ExtendedAnvilAdminMenu.TITLE_MAIN.equals(title)
+                || ExtendedAnvilAdminMenu.TITLE_REFUND.equals(title)
+                || ExtendedAnvilAdminMenu.TITLE_CAPS.equals(title)
+                || ExtendedAnvilAdminMenu.TITLE_PRIO.equals(title);
+    }
 
-        // if not set, keep vanilla max by default
-        int cap;
-        if (override == Integer.MIN_VALUE) {
-            cap = ench.getMaxLevel();
-        } else {
-            cap = override;
+    private String stripColorPrefix(String displayName) {
+        if (displayName == null) return null;
+        // expected "§e<key>"
+        if (displayName.length() >= 2 && displayName.charAt(0) == '§') {
+            return displayName.substring(2);
         }
-
-        if (cap < 0) cap = ench.getMaxLevel(); // safety: negative treated as default
-        if (cap == 0) return 0;
-
-        if (level > cap) return cap;
-        return level;
+        return displayName;
     }
 
-    private boolean isBook(ItemStack it) {
-        if (it == null) return false;
-        return it.getType() == Material.BOOK || it.getType() == Material.ENCHANTED_BOOK;
-    }
-
-    private boolean isEnchantedBook(ItemStack it) {
-        if (it == null) return false;
-        return it.getType() == Material.ENCHANTED_BOOK;
-    }
-
-    private Map<Enchantment, Integer> getStoredEnchants(ItemStack book) {
-        ItemMeta meta = book.getItemMeta();
-        if (!(meta instanceof EnchantmentStorageMeta)) return Collections.emptyMap();
-        EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
-        return new HashMap<Enchantment, Integer>(esm.getStoredEnchants());
-    }
-
-    private ItemStack buildEnchantedBook(LinkedHashMap<Enchantment, Integer> enchants) {
-        ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
-        ItemMeta meta = out.getItemMeta();
-        if (meta instanceof EnchantmentStorageMeta) {
-            EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
-            for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
-                esm.addStoredEnchant(e.getKey(), e.getValue(), false);
-            }
-            out.setItemMeta(esm);
-        }
-        return out;
-    }
-
-    private LinkedHashMap<Enchantment, Integer> extractAll(Map<Enchantment, Integer> current) {
-        List<Enchantment> order = new ArrayList<Enchantment>(current.keySet());
-        Collections.sort(order, new Comparator<Enchantment>() {
-            @Override
-            public int compare(Enchantment a, Enchantment b) {
-                return a.getKey().toString().compareTo(b.getKey().toString());
-            }
-        });
-
-        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<Enchantment, Integer>();
-        for (Enchantment e : order) out.put(e, current.get(e));
-        return out;
-    }
-
-    private LinkedHashMap<Enchantment, Integer> extractOne(Map<Enchantment, Integer> current) {
-        Enchantment chosen = DisenchantPriority.chooseOne(plugin, current.keySet());
-        if (chosen == null) return new LinkedHashMap<Enchantment, Integer>();
-
-        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<Enchantment, Integer>();
-        out.put(chosen, current.get(chosen));
-        return out;
-    }
-
-    private boolean canStack(ItemStack a, ItemStack b) {
-        if (a.getType() != b.getType()) return false;
-        if (a.getMaxStackSize() <= 1) return false;
-        if (!Objects.equals(a.getItemMeta(), b.getItemMeta())) return false;
-        return a.getAmount() + b.getAmount() <= a.getMaxStackSize();
-    }
-
-    private enum Mode {
-        DISENCHANT,
-        APPLY_BOOK,
-        BLOCKED
+    private String extractKeyFromPriorityName(String displayName) {
+        if (displayName == null) return null;
+        // "§d#12 §fminecraft:sharpness"
+        // remove color codes crudely:
+        String s = displayName.replace("§d", "").replace("§f", "");
+        int idx = s.lastIndexOf(' ');
+        if (idx < 0) return s.trim();
+        return s.substring(idx + 1).trim();
     }
 }
