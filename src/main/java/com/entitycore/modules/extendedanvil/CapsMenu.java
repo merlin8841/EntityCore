@@ -18,10 +18,8 @@ public final class CapsMenu {
     public static final int SIZE = 54;
 
     public static final int SLOT_BACK = 45;
-    public static final int SLOT_PAGE_INFO = 49;
-
-    // 0..44 are list entries, 46/52 could be prev/next if you already had them; keep simple here:
     public static final int SLOT_PREV = 46;
+    public static final int SLOT_PAGE_INFO = 49;
     public static final int SLOT_NEXT = 52;
 
     private static final int PAGE_SIZE = 45;
@@ -39,7 +37,7 @@ public final class CapsMenu {
     public static void render(Inventory inv, JavaPlugin plugin, ExtendedAnvilConfig cfg, int page) {
         if (inv == null) return;
 
-        // Fill list
+        // Pull all enchantments from registry (modern Paper)
         List<Enchantment> enchants = new ArrayList<>();
         for (Enchantment e : Registry.ENCHANTMENT) {
             if (e != null) enchants.add(e);
@@ -49,7 +47,7 @@ public final class CapsMenu {
         int maxPage = Math.max(0, (enchants.size() - 1) / PAGE_SIZE);
         int p = Math.max(0, Math.min(maxPage, page));
 
-        // Clear
+        // Clear all slots
         for (int i = 0; i < SIZE; i++) inv.setItem(i, null);
 
         int start = p * PAGE_SIZE;
@@ -59,9 +57,11 @@ public final class CapsMenu {
         for (int i = start; i < end; i++) {
             Enchantment e = enchants.get(i);
             String key = e.getKey().toString();
-            int cap = cfg.getCap(key);
+            int vanillaMax = e.getMaxLevel();
 
-            inv.setItem(slot++, capItem(key, cap));
+            int cap = cfg.getCapFor(key, vanillaMax);
+
+            inv.setItem(slot++, capItem(key, vanillaMax, cap));
         }
 
         inv.setItem(SLOT_BACK, button(Material.BARRIER, "§cBack", List.of("§7Return to admin menu.")));
@@ -70,8 +70,15 @@ public final class CapsMenu {
         inv.setItem(SLOT_PAGE_INFO, button(Material.PAPER, "§bPage", List.of("§7" + (p + 1) + " / " + (maxPage + 1))));
     }
 
+    /**
+     * Reads click on:
+     * - Back / Prev / Next
+     * - Enchant entry (slots 0..44) -> returns its key
+     *
+     * currentPage is what your session manager thinks the current page is.
+     */
     public static Click getClicked(Inventory inv, int rawSlot, int currentPage) {
-        if (rawSlot < 0 || rawSlot >= inv.getSize()) return null;
+        if (inv == null) return null;
 
         if (rawSlot == SLOT_PREV) return new Click(null, Math.max(0, currentPage - 1), ClickType.PAGE);
         if (rawSlot == SLOT_NEXT) return new Click(null, currentPage + 1, ClickType.PAGE);
@@ -84,7 +91,6 @@ public final class CapsMenu {
             ItemMeta meta = it.getItemMeta();
             if (meta == null || meta.getLore() == null) return null;
 
-            // lore line: "§7Key: §f<namespaced>"
             String key = null;
             for (String line : meta.getLore()) {
                 if (line != null && line.startsWith("§7Key: §f")) {
@@ -100,14 +106,16 @@ public final class CapsMenu {
         return null;
     }
 
-    private static ItemStack capItem(String key, int cap) {
+    private static ItemStack capItem(String key, int vanillaMax, int cap) {
         ItemStack it = new ItemStack(Material.ENCHANTED_BOOK, 1);
         ItemMeta meta = it.getItemMeta();
         if (meta != null) {
             meta.setDisplayName("§d" + key);
             meta.setLore(List.of(
                     "§7Key: §f" + key,
+                    "§7Vanilla max: §f" + vanillaMax,
                     "§7Cap: §f" + cap,
+                    "§7Cap 0 = disabled",
                     "§7Left click: §a-1",
                     "§7Right click: §a+1",
                     "§7Shift+Left: §a-10",
