@@ -21,13 +21,15 @@ public final class EnchantCostService {
     }
 
     public ApplyPreview previewApply(Player player, ItemStack item, ItemStack book) {
+        if (item == null || book == null) return new ApplyPreview(false, null, 0);
+
         ItemStack out = item.clone();
         int cost = 0;
 
-        for (Map.Entry<Enchantment, Integer> e :
-                book.getEnchantments().entrySet()) {
+        // Placeholder scaling (we will replace with vanilla-like later)
+        for (Map.Entry<Enchantment, Integer> e : book.getEnchantments().entrySet()) {
             out.addUnsafeEnchantment(e.getKey(), e.getValue());
-            cost += e.getValue() * 2;
+            cost += Math.max(1, e.getValue()) * 2;
         }
 
         return new ApplyPreview(true, out, cost);
