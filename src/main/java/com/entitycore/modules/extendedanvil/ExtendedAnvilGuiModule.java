@@ -10,7 +10,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  * Extended Anvil (chest GUI) module.
  *
  * Player GUI:
- *  - /ea (permission: entitycore.extendedanvil.use)
+ *  - /ea (permission: entitycore.extendedanvil.use) [requires looking at an anvil via command handler]
  * Operator GUI:
  *  - /eaadmin (permission: entitycore.extendedanvil.admin)
  */
@@ -59,7 +59,7 @@ public final class ExtendedAnvilGuiModule implements Module {
             ea.setExecutor(playerCommand);
             ea.setTabCompleter(playerCommand);
         } else {
-            plugin.getLogger().warning("Command 'ea' missing from plugin.yml (ExtendedAnvilGuiModule). ");
+            plugin.getLogger().warning("Command 'ea' missing from plugin.yml (ExtendedAnvilGuiModule).");
         }
 
         PluginCommand eaAdmin = plugin.getCommand("eaadmin");
@@ -67,15 +67,19 @@ public final class ExtendedAnvilGuiModule implements Module {
             eaAdmin.setExecutor(adminCommand);
             eaAdmin.setTabCompleter(adminCommand);
         } else {
-            plugin.getLogger().warning("Command 'eaadmin' missing from plugin.yml (ExtendedAnvilGuiModule). ");
+            plugin.getLogger().warning("Command 'eaadmin' missing from plugin.yml (ExtendedAnvilGuiModule).");
         }
 
-        plugin.getLogger().info("[ExtendedAnvil] Enabled. refund="
-                + config.getRefundPercentFirst() + "%/"
+        plugin.getLogger().info("[ExtendedAnvil] Enabled"
+                + " refund=" + config.getRefundPercentFirst() + "%/"
                 + config.getRefundPercentSecond() + "%/"
                 + config.getRefundPercentLater() + "%"
-                + ", xpPerLvl=" + config.getXpPerEnchantLevel()
+                + ", refundLvlsPerEnchantLvl=" + config.getRefundLevelsPerEnchantLevel()
                 + ", allowCurseRemoval=" + config.isAllowCurseRemoval()
+                + ", applyCost(base/perEnchant/perStoredLvl)="
+                + config.getApplyCostBaseLevels() + "/"
+                + config.getApplyCostPerEnchant() + "/"
+                + config.getApplyCostPerStoredLevel()
         );
     }
 
