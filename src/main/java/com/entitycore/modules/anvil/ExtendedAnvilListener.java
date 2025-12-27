@@ -1,5 +1,6 @@
 package com.entitycore.modules.anvil;
 
+import org.bukkit.Bukkit;
 import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.Sound;
@@ -24,41 +25,44 @@ public final class ExtendedAnvilListener implements Listener {
     private final JavaPlugin plugin;
     private final XpRefundService refundService;
 
+    // Store TRUE vanilla repair cost for apply operations (per-inventory instance)
+    private final Map<Integer, Integer> trueApplyCostByInv = new HashMap<Integer, Integer>();
+
     public ExtendedAnvilListener(JavaPlugin plugin, XpRefundService refundService) {
         this.plugin = plugin;
         this.refundService = refundService;
     }
 
     /* =========================================================
-       PREVIEW
+       PREVIEW (DISENCHANT override) + PREVIEW (APPLY vanilla cost capture)
        ========================================================= */
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPrepare(PrepareAnvilEvent event) {
         if (!(event.getInventory() instanceof AnvilInventory)) return;
-        AnvilInventory inv = (AnvilInventory) event.getInventory();
+        final AnvilInventory inv = (AnvilInventory) event.getInventory();
+        final int invKey = System.identityHashCode(inv);
 
         ItemStack left = inv.getItem(0);
         ItemStack right = inv.getItem(1);
 
-        if (left == null || left.getType() == Material.AIR) {
-            event.setResult(null);
-            safeSetRepairCost(inv, 0);
-            return;
-        }
-        if (right == null || right.getType() == Material.AIR) {
-            // let vanilla handle rename/repair with only left item
+        if (left == null || left.getType() == Material.AIR || right == null || right.getType() == Material.AIR) {
+            // clear stored true cost if inputs not present
+            trueApplyCostByInv.remove(invKey);
             return;
         }
 
-        // Block book+book entirely (no combining/upgrading enchanted books)
+        // Block enchanted book + enchanted book entirely
         if (isEnchantedBook(left) && isEnchantedBook(right)) {
             event.setResult(null);
             safeSetRepairCost(inv, 0);
+            trueApplyCostByInv.remove(invKey);
             return;
         }
 
+        // ---------------------------------------------------------
         // DISENCHANT PREVIEW: item + BOOK(s) -> enchanted book
+        // ---------------------------------------------------------
         if (right.getType() == Material.BOOK && !isBook(left)) {
             Map<Enchantment, Integer> current = new HashMap<Enchantment, Integer>(left.getEnchantments());
             if (current.isEmpty()) {
@@ -78,33 +82,77 @@ public final class ExtendedAnvilListener implements Listener {
                 return;
             }
 
-            event.setResult(buildEnchantedBook(extracted));
+            final ItemStack outBook = buildEnchantedBook(extracted);
 
-            // Bedrock needs a non-zero cost to make result “takeable”
+            // Set result in event
+            event.setResult(outBook);
+
+            // Also force into result slot for Bedrock/Geyser
+            trySetResultSlot(inv, outBook);
+
+            // And set again next tick (Geyser sometimes needs a follow-up)
+            Bukkit.getScheduler().runTask(plugin, new Runnable() {
+                @Override public void run() {
+                    trySetResultSlot(inv, outBook);
+                }
+            });
+
+            // Keep display cost low so Bedrock allows taking it
             safeSetRepairCost(inv, 1);
             return;
         }
 
-        // APPLY PREVIEW: item + ENCHANTED_BOOK -> merged item
-        if (isEnchantedBook(right) && !isBook(left)) {
-            MergeOutcome out = manualMerge(left, right, inv);
-            if (out == null || out.result == null || out.result.getType() == Material.AIR) {
-                event.setResult(null);
-                safeSetRepairCost(inv, 0);
-                return;
-            }
+        // ---------------------------------------------------------
+        // APPLY PREVIEW: item + ENCHANTED_BOOK -> vanilla handles preview
+        // We capture vanilla cost on MONITOR (below) and clamp display to 39 if needed.
+        // ---------------------------------------------------------
+        if (right.getType() == Material.ENCHANTED_BOOK && !isBook(left)) {
+            // Do nothing here; allow vanilla to compute. Cost capture happens in MONITOR handler.
+            return;
+        }
 
-            event.setResult(out.result);
+        // Otherwise: not our custom operation
+        trueApplyCostByInv.remove(invKey);
+    }
 
-            // Keep preview <= 39 so Bedrock never hard-blocks.
-            // We still charge the TRUE cost on click.
-            int preview = Math.min(39, Math.max(1, out.trueCost));
-            safeSetRepairCost(inv, preview);
+    /**
+     * After vanilla prepares the result, capture the TRUE repair cost and then clamp DISPLAY cost to 39
+     * to avoid Bedrock "Too Expensive", while still charging the true cost on click.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onPrepareCaptureVanillaCost(PrepareAnvilEvent event) {
+        if (!(event.getInventory() instanceof AnvilInventory)) return;
+        AnvilInventory inv = (AnvilInventory) event.getInventory();
+        int invKey = System.identityHashCode(inv);
+
+        ItemStack left = inv.getItem(0);
+        ItemStack right = inv.getItem(1);
+
+        if (left == null || left.getType() == Material.AIR || right == null || right.getType() == Material.AIR) {
+            trueApplyCostByInv.remove(invKey);
+            return;
+        }
+
+        // Only track apply-from-book
+        if (right.getType() != Material.ENCHANTED_BOOK || isBook(left)) {
+            trueApplyCostByInv.remove(invKey);
+            return;
+        }
+
+        int vanillaCost = safeGetRepairCost(inv);
+        if (vanillaCost < 0) vanillaCost = 0;
+
+        trueApplyCostByInv.put(invKey, vanillaCost);
+
+        // If vanilla cost > 39, Bedrock will show "Too Expensive" and block.
+        // Clamp DISPLAY cost to 39 to keep UI usable. We still charge vanillaCost on take.
+        if (vanillaCost > 39) {
+            safeSetRepairCost(inv, 39);
         }
     }
 
     /* =========================================================
-       RESULT CLICK (Bedrock-safe)
+       CLICK HANDLING (Bedrock-safe)
        ========================================================= */
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -114,29 +162,28 @@ public final class ExtendedAnvilListener implements Listener {
 
         if (!(event.getView().getTopInventory() instanceof AnvilInventory)) return;
         AnvilInventory inv = (AnvilInventory) event.getView().getTopInventory();
+        int invKey = System.identityHashCode(inv);
 
-        // This is the key Bedrock fix: result slot is ALWAYS raw slot 2 in the anvil top inventory.
+        // Result slot in anvil top inventory is raw slot 2 (consistent on Java + Bedrock)
         if (event.getRawSlot() != 2) return;
 
         ItemStack left = inv.getItem(0);
         ItemStack right = inv.getItem(1);
-        ItemStack result = inv.getItem(2);
 
-        if (result == null || result.getType() == Material.AIR) return;
         if (left == null || left.getType() == Material.AIR) return;
         if (right == null || right.getType() == Material.AIR) return;
 
-        // Always cancel vanilla result taking for our two custom modes.
-        // (Prevents Bedrock “Too Expensive” lock and ensures consistent behavior.)
+        // DISENCHANT: item + BOOK
         if (right.getType() == Material.BOOK && !isBook(left)) {
             event.setCancelled(true);
             handleDisenchantTake(player, inv, event.getAction());
             return;
         }
 
+        // APPLY: item + ENCHANTED_BOOK
         if (right.getType() == Material.ENCHANTED_BOOK && !isBook(left)) {
             event.setCancelled(true);
-            handleApplyTake(player, inv, event.getAction());
+            handleApplyTake(player, inv, event.getAction(), invKey);
         }
     }
 
@@ -168,12 +215,15 @@ public final class ExtendedAnvilListener implements Listener {
             return;
         }
 
-        // consume exactly 1 plain book
-        right.setAmount(right.getAmount() - 1);
-        if (right.getAmount() <= 0) inv.setItem(1, null);
-        else inv.setItem(1, right);
+        // consume 1 plain book
+        int newAmt = right.getAmount() - 1;
+        if (newAmt <= 0) inv.setItem(1, null);
+        else {
+            right.setAmount(newAmt);
+            inv.setItem(1, right);
+        }
 
-        // remove extracted enchants from the item
+        // remove extracted enchants from item
         ItemStack newLeft = left.clone();
         ItemMeta meta = newLeft.getItemMeta();
         if (meta == null) return;
@@ -184,12 +234,12 @@ public final class ExtendedAnvilListener implements Listener {
         newLeft.setItemMeta(meta);
         inv.setItem(0, newLeft);
 
-        // clear result
+        // clear result slot
         inv.setItem(2, null);
 
-        // refund XP levels (diminishing handled in service)
-        int refundedLevels = refundService.refundForRemoval(player, newLeft, extracted);
-        if (refundedLevels > 0) {
+        // refund XP (diminishing handled in service)
+        int refunded = refundService.refundForRemoval(player, newLeft, extracted);
+        if (refunded > 0) {
             player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
         } else {
             player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 0.7f, 1.0f);
@@ -199,47 +249,57 @@ public final class ExtendedAnvilListener implements Listener {
     }
 
     /* =========================================================
-       APPLY TAKE (bypass Too Expensive + charge true cost)
+       APPLY TAKE (charge TRUE vanilla cost, hide Too Expensive on Bedrock)
        ========================================================= */
 
-    private void handleApplyTake(Player player, AnvilInventory inv, InventoryAction action) {
+    private void handleApplyTake(Player player, AnvilInventory inv, InventoryAction action, int invKey) {
         ItemStack left = inv.getItem(0);
         ItemStack right = inv.getItem(1);
+        ItemStack result = inv.getItem(2);
 
         if (left == null || left.getType() == Material.AIR) return;
         if (right == null || right.getType() != Material.ENCHANTED_BOOK) return;
 
-        MergeOutcome out = manualMerge(left, right, inv);
-        if (out == null || out.result == null || out.result.getType() == Material.AIR) return;
+        // If vanilla didn't produce a result (rare edge), build our own merge result
+        if (result == null || result.getType() == Material.AIR) {
+            result = manualMergeResult(left, right, inv);
+            if (result == null || result.getType() == Material.AIR) return;
+        }
 
-        int trueCost = Math.max(0, out.trueCost);
-        boolean creative = player.getGameMode() == GameMode.CREATIVE;
+        int trueCost = 0;
+        if (trueApplyCostByInv.containsKey(invKey)) {
+            trueCost = trueApplyCostByInv.get(invKey);
+        } else {
+            // Fallback: use whatever is currently in repairCost (may be clamped to 39)
+            trueCost = Math.max(0, safeGetRepairCost(inv));
+        }
 
-        // This is the only “gate” for normal players: having enough levels.
+        boolean creative = (player.getGameMode() == GameMode.CREATIVE);
         if (!creative && player.getLevel() < trueCost) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
         }
 
-        if (!giveResultToPlayer(player, action, out.result)) {
+        if (!giveResultToPlayer(player, action, result.clone())) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
         }
 
         // consume 1 enchanted book
-        if (right.getAmount() <= 1) inv.setItem(1, null);
+        int bookAmt = right.getAmount() - 1;
+        if (bookAmt <= 0) inv.setItem(1, null);
         else {
-            right.setAmount(right.getAmount() - 1);
+            right.setAmount(bookAmt);
             inv.setItem(1, right);
         }
 
-        // consume left
+        // consume left item
         inv.setItem(0, null);
 
         // clear result
         inv.setItem(2, null);
 
-        // charge levels (supports 500+)
+        // charge true cost (supports 500+)
         if (!creative && trueCost > 0) {
             player.giveExpLevels(-trueCost);
         }
@@ -249,10 +309,86 @@ public final class ExtendedAnvilListener implements Listener {
     }
 
     /* =========================================================
-       Merge / caps / cost
+       Helpers
        ========================================================= */
 
-    private MergeOutcome manualMerge(ItemStack left, ItemStack right, AnvilInventory inv) {
+    private boolean giveResultToPlayer(Player player, InventoryAction action, ItemStack result) {
+        // Bedrock "tap" often behaves like normal pickup, but cursor operations can be inconsistent.
+        // Strategy:
+        // - If action is MOVE_TO_OTHER_INVENTORY (shift), add to inventory.
+        // - Otherwise: if cursor empty, put on cursor; else add to inventory.
+
+        if (action == InventoryAction.MOVE_TO_OTHER_INVENTORY) {
+            Map<Integer, ItemStack> leftovers = player.getInventory().addItem(result);
+            return leftovers == null || leftovers.isEmpty();
+        }
+
+        ItemStack cursor = player.getItemOnCursor();
+        boolean cursorEmpty = (cursor == null || cursor.getType() == Material.AIR);
+
+        if (cursorEmpty) {
+            player.setItemOnCursor(result);
+            return true;
+        }
+
+        Map<Integer, ItemStack> leftovers = player.getInventory().addItem(result);
+        return leftovers == null || leftovers.isEmpty();
+    }
+
+    private void trySetResultSlot(AnvilInventory inv, ItemStack result) {
+        try {
+            inv.setItem(2, result);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private int safeGetRepairCost(AnvilInventory inv) {
+        try {
+            return inv.getRepairCost();
+        } catch (Throwable ignored) {
+            return 0;
+        }
+    }
+
+    private void safeSetRepairCost(AnvilInventory inv, int cost) {
+        try {
+            inv.setRepairCost(cost);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    private boolean isBook(ItemStack it) {
+        if (it == null) return false;
+        return it.getType() == Material.BOOK || it.getType() == Material.ENCHANTED_BOOK;
+    }
+
+    private boolean isEnchantedBook(ItemStack it) {
+        if (it == null) return false;
+        return it.getType() == Material.ENCHANTED_BOOK;
+    }
+
+    private Map<Enchantment, Integer> getStoredEnchants(ItemStack book) {
+        ItemMeta meta = book.getItemMeta();
+        if (!(meta instanceof EnchantmentStorageMeta)) return Collections.emptyMap();
+        return new HashMap<Enchantment, Integer>(((EnchantmentStorageMeta) meta).getStoredEnchants());
+    }
+
+    private ItemStack buildEnchantedBook(LinkedHashMap<Enchantment, Integer> enchants) {
+        ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
+        ItemMeta meta = out.getItemMeta();
+        if (meta instanceof EnchantmentStorageMeta) {
+            EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
+            for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
+                esm.addStoredEnchant(e.getKey(), e.getValue(), false);
+            }
+            out.setItemMeta(esm);
+        }
+        return out;
+    }
+
+    // Manual merge result ONLY for edge cases where vanilla doesn't populate output.
+    // We still charge TRUE vanilla cost from inv.getRepairCost() capture.
+    private ItemStack manualMergeResult(ItemStack left, ItemStack right, AnvilInventory inv) {
         Map<Enchantment, Integer> stored = getStoredEnchants(right);
         if (stored.isEmpty()) return null;
 
@@ -262,8 +398,7 @@ public final class ExtendedAnvilListener implements Listener {
 
         Map<Enchantment, Integer> existing = new HashMap<Enchantment, Integer>(merged.getEnchantments());
 
-        int applied = 0;
-        int cost = 0;
+        boolean changed = false;
 
         for (Map.Entry<Enchantment, Integer> entry : stored.entrySet()) {
             Enchantment ench = entry.getKey();
@@ -283,106 +418,21 @@ public final class ExtendedAnvilListener implements Listener {
             }
             if (conflict) continue;
 
-            int capped = applyCap(ench, level);
-            if (capped <= 0) continue;
-
             int oldLevel = existing.containsKey(ench) ? existing.get(ench) : 0;
 
-            // Only apply if it increases level
-            if (capped > oldLevel) {
-                meta.addEnchant(ench, capped, false);
-                existing.put(ench, capped);
-                applied++;
-
-                cost += computeApplyCost(ench, capped, oldLevel);
+            // apply if higher (replace lower)
+            if (level > oldLevel) {
+                meta.addEnchant(ench, level, false);
+                existing.put(ench, level);
+                changed = true;
             }
         }
 
-        // Rename support (Paper); harmless if empty
-        String rename = safeGetRenameText(inv);
-        if (rename != null && !rename.trim().isEmpty()) {
-            meta.setDisplayName(rename);
-            cost += 1;
-        }
-
-        if (applied == 0 && (rename == null || rename.trim().isEmpty())) return null;
+        if (!changed) return null;
 
         merged.setItemMeta(meta);
-
-        // Never allow 0 cost when something changed
-        return new MergeOutcome(merged, Math.max(1, cost));
+        return merged;
     }
-
-    private int computeApplyCost(Enchantment ench, int newLevel, int oldLevel) {
-        int delta = Math.max(1, newLevel - oldLevel);
-
-        int weight;
-        if (ench.isCursed()) weight = 1;
-        else if (ench.isTreasure()) weight = 8;
-        else weight = 4;
-
-        return weight * newLevel * delta;
-    }
-
-    private int applyCap(Enchantment ench, int level) {
-        String key = ench.getKey().toString();
-        String path = "extendedanvil.caps." + key;
-
-        int cap;
-        if (plugin.getConfig().contains(path)) cap = plugin.getConfig().getInt(path);
-        else cap = ench.getMaxLevel();
-
-        if (cap < 0) cap = ench.getMaxLevel();
-        if (cap == 0) return 0;
-
-        return Math.min(level, cap);
-    }
-
-    private void safeSetRepairCost(AnvilInventory inv, int cost) {
-        try {
-            inv.setRepairCost(cost);
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private String safeGetRenameText(AnvilInventory inv) {
-        try {
-            return inv.getRenameText();
-        } catch (Throwable ignored) {
-            return null;
-        }
-    }
-
-    /* =========================================================
-       Give result to player (Bedrock-safe)
-       ========================================================= */
-
-    private boolean giveResultToPlayer(Player player, InventoryAction action, ItemStack result) {
-        // If cursor is empty and this is a normal pickup-type action, prefer cursor.
-        ItemStack cursor = player.getItemOnCursor();
-        boolean cursorEmpty = (cursor == null || cursor.getType() == Material.AIR);
-
-        boolean pickupish =
-                action == InventoryAction.PICKUP_ALL ||
-                action == InventoryAction.PICKUP_ONE ||
-                action == InventoryAction.PICKUP_HALF ||
-                action == InventoryAction.PICKUP_SOME ||
-                action == InventoryAction.SWAP_WITH_CURSOR ||
-                action == InventoryAction.COLLECT_TO_CURSOR;
-
-        if (pickupish && cursorEmpty) {
-            player.setItemOnCursor(result);
-            return true;
-        }
-
-        // Otherwise push into inventory (covers Bedrock tap / quick-move)
-        Map<Integer, ItemStack> leftovers = player.getInventory().addItem(result);
-        return leftovers == null || leftovers.isEmpty();
-    }
-
-    /* =========================================================
-       Disenchant ordering + book utils
-       ========================================================= */
 
     private LinkedHashMap<Enchantment, Integer> extractAll(Map<Enchantment, Integer> current) {
         List<Enchantment> order = new ArrayList<Enchantment>(current.keySet());
@@ -405,44 +455,5 @@ public final class ExtendedAnvilListener implements Listener {
         LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<Enchantment, Integer>();
         out.put(chosen, current.get(chosen));
         return out;
-    }
-
-    private ItemStack buildEnchantedBook(LinkedHashMap<Enchantment, Integer> enchants) {
-        ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
-        ItemMeta meta = out.getItemMeta();
-        if (meta instanceof EnchantmentStorageMeta) {
-            EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
-            for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
-                esm.addStoredEnchant(e.getKey(), e.getValue(), false);
-            }
-            out.setItemMeta(esm);
-        }
-        return out;
-    }
-
-    private Map<Enchantment, Integer> getStoredEnchants(ItemStack book) {
-        ItemMeta meta = book.getItemMeta();
-        if (!(meta instanceof EnchantmentStorageMeta)) return Collections.emptyMap();
-        return new HashMap<Enchantment, Integer>(((EnchantmentStorageMeta) meta).getStoredEnchants());
-    }
-
-    private boolean isBook(ItemStack it) {
-        if (it == null) return false;
-        return it.getType() == Material.BOOK || it.getType() == Material.ENCHANTED_BOOK;
-    }
-
-    private boolean isEnchantedBook(ItemStack it) {
-        if (it == null) return false;
-        return it.getType() == Material.ENCHANTED_BOOK;
-    }
-
-    private static final class MergeOutcome {
-        final ItemStack result;
-        final int trueCost;
-
-        MergeOutcome(ItemStack result, int trueCost) {
-            this.result = result;
-            this.trueCost = trueCost;
-        }
     }
 }
