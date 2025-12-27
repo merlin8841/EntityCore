@@ -13,8 +13,13 @@ commands:
   hfadmin:
     description: Opens HopperFilters operator settings.
     usage: /hfadmin
+
+  ea:
+    description: Opens Extended Anvil GUI while looking at an anvil
+    usage: /ea
+    aliases: [extendedanvil, extended-anvil]
   eaadmin:
-    description: Opens ExtendedAnvil operator settings.
+    description: Opens Extended Anvil operator settings
     usage: /eaadmin
 
 permissions:
@@ -24,6 +29,9 @@ permissions:
   entitycore.hopperfilters.admin:
     default: op
 
+  entitycore.extendedanvil.use:
+    description: Allows using the Extended Anvil GUI
+    default: true
   entitycore.extendedanvil.admin:
-    description: Allows ExtendedAnvil operator settings
+    description: Operator-only Extended Anvil settings
     default: op
