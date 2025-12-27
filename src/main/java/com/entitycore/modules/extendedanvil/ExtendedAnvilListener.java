@@ -31,4 +31,10 @@ public final class ExtendedAnvilListener implements Listener {
         if (!(event.getPlayer() instanceof Player player)) return;
         sessions.handleClose(player, event);
     }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPrepare(PrepareAnvilEvent event) {
+        // Never cancel; just override result/cost when it's OUR /ea GUI
+        sessions.handlePrepare(event);
+    }
 }
