@@ -20,18 +20,22 @@ public final class ExtendedAnvilListener implements Listener {
         if (!(e.getWhoClicked() instanceof Player player)) return;
         if (!sessions.isPlayerMenu(player, e.getInventory())) return;
 
-        if (e.getSlot() == PlayerMenu.SLOT_RESULT) {
+        int slot = e.getRawSlot();
+
+        // Result slot is "craft"
+        if (slot == PlayerMenu.SLOT_RESULT) {
             e.setCancelled(true);
             sessions.completeCraft(player, e.getInventory());
             return;
         }
 
-        if (e.getSlot() != PlayerMenu.SLOT_ITEM &&
-            e.getSlot() != PlayerMenu.SLOT_BOOK) {
+        // Only allow interacting with the two input slots
+        if (slot != PlayerMenu.SLOT_ITEM && slot != PlayerMenu.SLOT_BOOK) {
             e.setCancelled(true);
             return;
         }
 
+        // Let the click happen, then refresh preview next tick
         Bukkit.getScheduler().runTaskLater(
                 sessions.getPlugin(),
                 () -> sessions.refresh(player, e.getInventory()),
