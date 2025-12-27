@@ -10,9 +10,9 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.inventory.AnvilInventory;
-import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -98,17 +98,15 @@ public final class ExtendedAnvilListener implements Listener {
         // APPLY: item + ENCHANTED_BOOK -> item (supports >39)
         // =====================================================
         if (isEnchantedBook(right) && !isBook(left)) {
-            // Try to use vanilla preview result if it exists (gives best compatibility)
+            // Try to use vanilla preview result if it exists (best compatibility)
             ItemStack vanillaResult = event.getResult();
 
             MergeOutcome outcome;
             if (vanillaResult != null && vanillaResult.getType() != Material.AIR) {
-                // Enforce caps on vanilla result (so the rest stays vanilla)
                 ItemStack capped = enforceCapsOnResult(vanillaResult.clone());
-                outcome = new MergeOutcome(capped, computeTrueCostFromResult(left, capped, right));
+                outcome = new MergeOutcome(capped, computeTrueCostFromResult(left, capped));
             } else {
-                // Vanilla might have returned null because of “Too Expensive” on Bedrock side.
-                // We build the merge ourselves so the player can still apply it.
+                // Vanilla might have returned null; build merge ourselves
                 outcome = manualMerge(left, right, inv);
                 if (outcome == null || outcome.result == null) {
                     event.setResult(null);
@@ -120,8 +118,7 @@ public final class ExtendedAnvilListener implements Listener {
 
             event.setResult(outcome.result);
 
-            // IMPORTANT: keep preview cost <= 39 so Bedrock never blocks the UI.
-            // We charge the true cost on click.
+            // Keep preview <= 39 so Bedrock never blocks; charge true cost on take.
             int preview = Math.min(39, Math.max(1, outcome.trueCost));
             safeSetRepairCost(inv, preview);
 
@@ -140,12 +137,11 @@ public final class ExtendedAnvilListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player)) return;
         Player player = (Player) event.getWhoClicked();
 
-        InventoryView view = event.getView();
-        if (!(view.getTopInventory() instanceof AnvilInventory)) return;
-        AnvilInventory inv = (AnvilInventory) view.getTopInventory();
+        if (!(event.getView().getTopInventory() instanceof AnvilInventory)) return;
+        AnvilInventory inv = (AnvilInventory) event.getView().getTopInventory();
 
-        // RESULT slot (works for Bedrock tap + quick move)
-        if (event.getSlotType() != InventoryView.SlotType.RESULT) return;
+        // Version-safe result-slot detection
+        if (event.getSlotType() != InventoryType.SlotType.RESULT) return;
 
         int key = System.identityHashCode(inv);
         Ctx ctx = ctxMap.get(key);
@@ -159,10 +155,10 @@ public final class ExtendedAnvilListener implements Listener {
         ItemStack result = inv.getItem(2);
         if (result == null || result.getType() == Material.AIR) return;
 
-        // We always take over on result click for our modes (Bedrock consistency)
+        // Always take over on result take for our modes (Bedrock consistency)
         if (ctx.mode == Mode.DISENCHANT) {
             event.setCancelled(true);
-            handleDisenchantTake(player, inv, event, ctx);
+            handleDisenchantTake(player, inv, event);
             return;
         }
 
@@ -176,7 +172,7 @@ public final class ExtendedAnvilListener implements Listener {
        DISENCHANT APPLY
        ========================================================= */
 
-    private void handleDisenchantTake(Player player, AnvilInventory inv, InventoryClickEvent event, Ctx ctx) {
+    private void handleDisenchantTake(Player player, AnvilInventory inv, InventoryClickEvent event) {
         ItemStack left = inv.getItem(0);
         ItemStack right = inv.getItem(1);
 
@@ -195,18 +191,17 @@ public final class ExtendedAnvilListener implements Listener {
 
         ItemStack outBook = buildEnchantedBook(extracted);
 
-        // Give output (cursor if empty, otherwise inventory)
         if (!giveResultToPlayer(player, event.getAction(), outBook, event)) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
         }
 
-        // consume exactly 1 plain book per operation
+        // consume 1 book
         right.setAmount(right.getAmount() - 1);
         if (right.getAmount() <= 0) inv.setItem(1, null);
         else inv.setItem(1, right);
 
-        // remove extracted enchants from left item
+        // remove enchants
         ItemStack newLeft = left.clone();
         ItemMeta meta = newLeft.getItemMeta();
         if (meta == null) return;
@@ -217,10 +212,8 @@ public final class ExtendedAnvilListener implements Listener {
         newLeft.setItemMeta(meta);
         inv.setItem(0, newLeft);
 
-        // clear result slot
         inv.setItem(2, null);
 
-        // refund XP
         int refundedLevels = refundService.refundForRemoval(player, newLeft, extracted);
         if (refundedLevels > 0) {
             player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
@@ -246,14 +239,13 @@ public final class ExtendedAnvilListener implements Listener {
         if (out == null || out.getType() == Material.AIR) return;
 
         int trueCost = Math.max(0, ctx.trueCost);
-
         boolean creative = player.getGameMode() == GameMode.CREATIVE;
+
         if (!creative && player.getLevel() < trueCost) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
         }
 
-        // Give output (cursor if empty, otherwise inventory)
         if (!giveResultToPlayer(player, event.getAction(), out, event)) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
@@ -266,13 +258,13 @@ public final class ExtendedAnvilListener implements Listener {
             inv.setItem(1, right);
         }
 
-        // consume left item
+        // consume left
         inv.setItem(0, null);
 
-        // clear result slot
+        // clear result
         inv.setItem(2, null);
 
-        // charge levels (can be 500+)
+        // charge levels (500+ supported)
         if (!creative && trueCost > 0) {
             player.giveExpLevels(-trueCost);
         }
@@ -295,15 +287,11 @@ public final class ExtendedAnvilListener implements Listener {
                 || action == InventoryAction.SWAP_WITH_CURSOR
                 || action == InventoryAction.COLLECT_TO_CURSOR);
 
-        boolean wantsQuickMove = (action == InventoryAction.MOVE_TO_OTHER_INVENTORY);
-
-        // If cursor is empty and this is a normal pickup, put on cursor
         if (wantsToCursor && (cursor == null || cursor.getType() == Material.AIR)) {
             event.setCursor(result);
             return true;
         }
 
-        // Otherwise try to add to inventory (covers Bedrock “tap” behavior)
         Map<Integer, ItemStack> left = player.getInventory().addItem(result);
         return left == null || left.isEmpty();
     }
@@ -338,17 +326,11 @@ public final class ExtendedAnvilListener implements Listener {
         return result;
     }
 
-    /**
-     * If vanilla result existed, we estimate a "true" cost based on what changed.
-     * This is used to allow >39 costs on Bedrock.
-     */
-    private int computeTrueCostFromResult(ItemStack before, ItemStack after, ItemStack book) {
-        // Simple, scalable: sum costs of each enchant that increased or was added.
+    private int computeTrueCostFromResult(ItemStack before, ItemStack after) {
         Map<Enchantment, Integer> a = before.getEnchantments();
         Map<Enchantment, Integer> b = after.getEnchantments();
 
         int cost = 0;
-
         for (Map.Entry<Enchantment, Integer> e : b.entrySet()) {
             Enchantment ench = e.getKey();
             int newLevel = e.getValue();
@@ -359,10 +341,7 @@ public final class ExtendedAnvilListener implements Listener {
             }
         }
 
-        // Rename/repair penalties (keep minimal)
         cost += 1;
-
-        // Never 0 when actually applying
         return Math.max(1, cost);
     }
 
@@ -386,7 +365,6 @@ public final class ExtendedAnvilListener implements Listener {
 
             if (!ench.canEnchantItem(merged)) continue;
 
-            // conflicts
             boolean conflict = false;
             for (Enchantment ex : existing.keySet()) {
                 if (ex.equals(ench)) continue;
@@ -409,7 +387,6 @@ public final class ExtendedAnvilListener implements Listener {
             }
         }
 
-        // Apply rename text if present (Paper)
         String rename = safeGetRenameText(inv);
         if (rename != null && !rename.trim().isEmpty()) {
             meta.setDisplayName(rename);
@@ -422,13 +399,9 @@ public final class ExtendedAnvilListener implements Listener {
         return new MergeOutcome(merged, Math.max(1, cost));
     }
 
-    /**
-     * Scales up (supports huge costs). This is what lets you charge 500+ levels.
-     */
     private int computeApplyCost(Enchantment ench, int newLevel, int oldLevel) {
         int delta = Math.max(1, newLevel - oldLevel);
 
-        // weights chosen to keep things “vanilla-ish” but scalable
         int weight;
         if (ench.isCursed()) weight = 1;
         else if (ench.isTreasure()) weight = 8;
