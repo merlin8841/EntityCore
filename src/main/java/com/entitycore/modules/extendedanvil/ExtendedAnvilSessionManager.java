@@ -22,11 +22,6 @@ public final class ExtendedAnvilSessionManager {
 
     private final Set<UUID> active = new HashSet<>();
 
-    // admin menus (existing)
-    private AdminMenu adminMenu;
-    private CapsMenu capsMenu;
-    private PriorityMenu priorityMenu;
-
     public ExtendedAnvilSessionManager(JavaPlugin plugin,
                                        ExtendedAnvilConfig config,
                                        XpRefundService refundService,
@@ -35,12 +30,10 @@ public final class ExtendedAnvilSessionManager {
         this.config = config;
         this.refundService = refundService;
         this.costService = costService;
-
-        this.adminMenu = new AdminMenu(this, config);
-        this.capsMenu = new CapsMenu(config);
-        this.priorityMenu = new PriorityMenu(config);
     }
 
+    /* ========================================================= */
+    /* SESSION LIFECYCLE                                         */
     /* ========================================================= */
 
     public void open(Player player) {
@@ -57,33 +50,17 @@ public final class ExtendedAnvilSessionManager {
     }
 
     /* ========================================================= */
-    /* ADMIN                                                     */
-    /* ========================================================= */
-
-    public void openAdminMenu(Player player) {
-        adminMenu.open(player);
-    }
-
-    public void openCapsMenu(Player player) {
-        capsMenu.open(player);
-    }
-
-    public void openPriorityMenu(Player player) {
-        priorityMenu.open(player);
-    }
-
-    /* ========================================================= */
-    /* PREPARE                                                   */
+    /* PREPARE ANVIL                                             */
     /* ========================================================= */
 
     public void handlePrepare(PrepareAnvilEvent event) {
         if (!(event.getView().getPlayer() instanceof Player player)) return;
         if (!isActive(player)) return;
-
         if (!(event.getInventory() instanceof AnvilInventory)) return;
+
         AnvilInventory anvil = (AnvilInventory) event.getInventory();
 
-        // KILL vanilla cap
+        // CRITICAL: remove vanilla 39-level cap
         anvil.setMaximumRepairCost(999999);
         anvil.setRepairCost(0);
 
@@ -142,7 +119,6 @@ public final class ExtendedAnvilSessionManager {
     public void handleClick(Player player, InventoryClickEvent event) {
         if (!isActive(player)) return;
         if (!(event.getInventory() instanceof AnvilInventory)) return;
-
         if (event.getRawSlot() != 2) return;
 
         AnvilInventory anvil = (AnvilInventory) event.getInventory();
