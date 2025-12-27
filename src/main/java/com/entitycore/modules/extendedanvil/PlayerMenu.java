@@ -4,8 +4,8 @@ import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
+import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.inventory.Inventory;
-import org.bukkit.inventory.InventoryType;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
@@ -31,7 +31,10 @@ public final class PlayerMenu {
     }
 
     public static boolean isThis(InventoryView view) {
-        return view != null && TITLE.equals(view.getTitle()) && view.getTopInventory().getType() == InventoryType.ANVIL;
+        return view != null
+                && TITLE.equals(view.getTitle())
+                && view.getTopInventory() != null
+                && view.getTopInventory().getType() == InventoryType.ANVIL;
     }
 
     /**
@@ -118,7 +121,7 @@ public final class PlayerMenu {
             return;
         }
 
-        // APPLY (vanilla-exact scaling via your reflection simulator)
+        // APPLY (vanilla-exact scaling via your service)
         if (mode == Mode.APPLY) {
             if (right == null || right.getType() != Material.ENCHANTED_BOOK) return;
 
