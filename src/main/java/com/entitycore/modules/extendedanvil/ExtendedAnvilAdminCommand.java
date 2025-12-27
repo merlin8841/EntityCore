@@ -6,11 +6,11 @@ import org.bukkit.entity.Player;
 import java.util.Collections;
 import java.util.List;
 
-public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter {
+public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabCompleter {
 
     private final ExtendedAnvilSessionManager sessions;
 
-    public ExtendedAnvilCommand(ExtendedAnvilSessionManager sessions) {
+    public ExtendedAnvilAdminCommand(ExtendedAnvilSessionManager sessions) {
         this.sessions = sessions;
     }
 
@@ -20,7 +20,7 @@ public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter
             sender.sendMessage("Players only.");
             return true;
         }
-        sessions.commandOpenPlayer(p);
+        sessions.commandOpenAdmin(p);
         return true;
     }
 
