@@ -14,9 +14,6 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 
-/**
- * Handles clicks in the player and operator GUIs.
- */
 public final class ExtendedAnvilListener implements Listener {
 
     private final Plugin plugin;
@@ -59,7 +56,6 @@ public final class ExtendedAnvilListener implements Listener {
     private void handlePlayerGuiClick(InventoryClickEvent e, Player player) {
         int raw = e.getRawSlot();
         if (raw < 0) return;
-
         if (raw >= e.getInventory().getSize()) return;
 
         boolean isItem = raw == ExtendedAnvilGui.SLOT_ITEM;
@@ -75,7 +71,7 @@ public final class ExtendedAnvilListener implements Listener {
 
         e.setCancelled(true);
         Inventory inv = e.getInventory();
-        ItemStack item = inv.getItem(ExtendedAnvilGui.SLOT_ITEM);
+        ItemStack target = inv.getItem(ExtendedAnvilGui.SLOT_ITEM);
 
         ExtendedAnvilUtil.InventoryViewAccessor accessor = new InventoryAccessor(inv);
 
@@ -83,26 +79,29 @@ public final class ExtendedAnvilListener implements Listener {
         int emptyBooks = ExtendedAnvilUtil.countEmptyBooks(inv.getContents(), ExtendedAnvilGui.BOOKS_FROM, ExtendedAnvilGui.BOOKS_TO);
 
         if (enchantedBook != null) {
-            String msg = service.applyBookToItem(player, item, enchantedBook);
-            if (msg != null) player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RESET + msg);
-
-            if (msg != null && msg.startsWith(ChatColor.GREEN.toString())) {
-                removeOneMatchingEnchantedBook(inv, ExtendedAnvilGui.BOOKS_FROM, ExtendedAnvilGui.BOOKS_TO);
-                player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.2f);
+            ExtendedAnvilService.ApplyResult res = service.applyFromBook(player, target, enchantedBook);
+            if (!res.ok()) {
+                player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RESET + res.message());
+                return;
             }
+
+            removeOneMatchingEnchantedBook(inv, ExtendedAnvilGui.BOOKS_FROM, ExtendedAnvilGui.BOOKS_TO);
+
+            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RESET + res.message());
+            player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.2f);
             return;
         }
 
         if (emptyBooks <= 0) {
-            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RED + "Put empty books (for disenchant) or an enchanted book (to apply) in the book slots.");
+            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RED
+                    + "Put empty books (for disenchant) or an enchanted book (to apply/combine) in the book slots.");
             return;
         }
 
         boolean removeAll = emptyBooks == 1;
-
         ExtendedAnvilUtil.takeOneEmptyBook(accessor, ExtendedAnvilGui.BOOKS_FROM, ExtendedAnvilGui.BOOKS_TO);
 
-        ExtendedAnvilService.DisenchantResult res = service.disenchant(player, item, removeAll);
+        ExtendedAnvilService.DisenchantResult res = service.disenchant(player, target, removeAll);
         if (!res.ok()) {
             giveBookBack(inv);
             player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RESET + res.message());
@@ -111,14 +110,14 @@ public final class ExtendedAnvilListener implements Listener {
 
         ItemStack book = res.book();
         var leftovers = player.getInventory().addItem(book);
-        if (!leftovers.isEmpty()) {
-            leftovers.values().forEach(it -> player.getWorld().dropItemNaturally(player.getLocation(), it));
-        }
+        if (!leftovers.isEmpty()) leftovers.values().forEach(it -> player.getWorld().dropItemNaturally(player.getLocation(), it));
 
-        if (res.xpRefund() > 0) {
-            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.GREEN + "Disenchanted " + res.removedCount() + " enchant(s). Refunded " + res.xpRefund() + " XP.");
+        if (res.refundLevels() > 0) {
+            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.GREEN
+                    + "Disenchanted " + res.removedCount() + " enchant(s). Refunded " + res.refundLevels() + " level(s).");
         } else {
-            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.GREEN + "Disenchanted " + res.removedCount() + " enchant(s).");
+            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.GREEN
+                    + "Disenchanted " + res.removedCount() + " enchant(s).");
         }
 
         player.playSound(player.getLocation(), Sound.BLOCK_GRINDSTONE_USE, 0.8f, 1.2f);
@@ -150,9 +149,14 @@ public final class ExtendedAnvilListener implements Listener {
             case ExtendedAnvilAdminGui.SLOT_REFUND_FIRST -> config.setRefundPercentFirst(config.getRefundPercentFirst() + delta);
             case ExtendedAnvilAdminGui.SLOT_REFUND_SECOND -> config.setRefundPercentSecond(config.getRefundPercentSecond() + delta);
             case ExtendedAnvilAdminGui.SLOT_REFUND_LATER -> config.setRefundPercentLater(config.getRefundPercentLater() + delta);
-            case ExtendedAnvilAdminGui.SLOT_XP_PER_LVL -> config.setXpPerEnchantLevel(config.getXpPerEnchantLevel() + delta);
-            case ExtendedAnvilAdminGui.SLOT_APPLY_COST -> config.setApplyBookLevelCost(config.getApplyBookLevelCost() + delta);
+            case ExtendedAnvilAdminGui.SLOT_REFUND_LEVELS_PER -> config.setRefundLevelsPerEnchantLevel(config.getRefundLevelsPerEnchantLevel() + delta);
+
             case ExtendedAnvilAdminGui.SLOT_CURSES -> config.setAllowCurseRemoval(!config.isAllowCurseRemoval());
+
+            case ExtendedAnvilAdminGui.SLOT_APPLY_BASE -> config.setApplyCostBaseLevels(config.getApplyCostBaseLevels() + delta);
+            case ExtendedAnvilAdminGui.SLOT_APPLY_PER_ENCHANT -> config.setApplyCostPerEnchant(config.getApplyCostPerEnchant() + delta);
+            case ExtendedAnvilAdminGui.SLOT_APPLY_PER_LEVEL -> config.setApplyCostPerStoredLevel(config.getApplyCostPerStoredLevel() + delta);
+
             case ExtendedAnvilAdminGui.SLOT_PRIORITY -> {
                 priorityGui.open(player);
                 return;
@@ -168,12 +172,16 @@ public final class ExtendedAnvilListener implements Listener {
                 config.setRefundPercentFirst(fresh.getRefundPercentFirst());
                 config.setRefundPercentSecond(fresh.getRefundPercentSecond());
                 config.setRefundPercentLater(fresh.getRefundPercentLater());
-                config.setXpPerEnchantLevel(fresh.getXpPerEnchantLevel());
+                config.setRefundLevelsPerEnchantLevel(fresh.getRefundLevelsPerEnchantLevel());
                 config.setAllowCurseRemoval(fresh.isAllowCurseRemoval());
-                config.setApplyBookLevelCost(fresh.getApplyBookLevelCost());
+
+                config.setApplyCostBaseLevels(fresh.getApplyCostBaseLevels());
+                config.setApplyCostPerEnchant(fresh.getApplyCostPerEnchant());
+                config.setApplyCostPerStoredLevel(fresh.getApplyCostPerStoredLevel());
 
                 config.getPriority().clear();
                 config.getPriority().addAll(fresh.getPriority());
+
                 config.save();
                 player.sendMessage(ChatColor.GREEN + "[EA] Reset to defaults.");
             }
