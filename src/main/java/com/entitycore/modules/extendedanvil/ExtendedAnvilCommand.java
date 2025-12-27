@@ -1,16 +1,15 @@
 package com.entitycore.modules.extendedanvil;
 
 import org.bukkit.ChatColor;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
-import org.bukkit.command.CommandSender;
-import org.bukkit.command.TabCompleter;
+import org.bukkit.Material;
+import org.bukkit.block.Block;
+import org.bukkit.command.*;
 import org.bukkit.entity.Player;
 
 import java.util.Collections;
 import java.util.List;
 
-/** /ea opens player GUI. */
+/** /ea opens player GUI, but only while looking at an anvil. */
 public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter {
 
     private final ExtendedAnvilGui gui;
@@ -29,8 +28,23 @@ public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter
             player.sendMessage(ChatColor.RED + "No permission.");
             return true;
         }
+
+        // Require looking at an anvil block (vanilla feel)
+        Block target = player.getTargetBlockExact(5);
+        if (target == null || !isAnvil(target.getType())) {
+            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RED
+                    + "You must be looking at an anvil to use /ea.");
+            return true;
+        }
+
         gui.open(player);
         return true;
+    }
+
+    private boolean isAnvil(Material mat) {
+        return mat == Material.ANVIL
+                || mat == Material.CHIPPED_ANVIL
+                || mat == Material.DAMAGED_ANVIL;
     }
 
     @Override
