@@ -19,7 +19,15 @@ public final class ExtendedAnvilAdminGui {
     public static final int SLOT_REFUND_FIRST_VALUE = 20;
     public static final int SLOT_REFUND_SECOND_VALUE = 21;
     public static final int SLOT_REFUND_LATER_VALUE = 22;
-    public static final int SLOT_REFUND_LEVELS_VALUE = 24;
+
+    /**
+     * "Fallback" is the levels-per-enchant-level refund used when % refund isn't used.
+     * KEEP THIS CONSTANT NAME because ExtendedAnvilListener references it.
+     */
+    public static final int SLOT_REFUND_FALLBACK_VALUE = 24;
+
+    // Optional: clearer alias name for readability (same slot)
+    public static final int SLOT_REFUND_LEVELS_VALUE = SLOT_REFUND_FALLBACK_VALUE;
 
     public static final int SLOT_GLOBAL_BASE_VALUE = 28;
     public static final int SLOT_ADD_PER_ENCHANT_VALUE = 29;
@@ -103,7 +111,7 @@ public final class ExtendedAnvilAdminGui {
                 List.of("")
         ));
 
-        inv.setItem(SLOT_REFUND_LEVELS_VALUE, ExtendedAnvilUtil.info(
+        inv.setItem(SLOT_REFUND_FALLBACK_VALUE, ExtendedAnvilUtil.info(
                 Material.EXPERIENCE_BOTTLE,
                 "Levels/EnchantLvl: " + config.getRefundLevelsPerEnchantLevel(),
                 List.of("Used when % refund cannot be computed")
@@ -150,7 +158,7 @@ public final class ExtendedAnvilAdminGui {
         placeDeltaButtons(inv, SLOT_REFUND_FIRST_VALUE);
         placeDeltaButtons(inv, SLOT_REFUND_SECOND_VALUE);
         placeDeltaButtons(inv, SLOT_REFUND_LATER_VALUE);
-        placeDeltaButtons(inv, SLOT_REFUND_LEVELS_VALUE);
+        placeDeltaButtons(inv, SLOT_REFUND_FALLBACK_VALUE);
 
         placeDeltaButtons(inv, SLOT_GLOBAL_BASE_VALUE);
         placeDeltaButtons(inv, SLOT_ADD_PER_ENCHANT_VALUE);
