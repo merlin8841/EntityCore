@@ -1,37 +1,31 @@
 package com.entitycore.modules.extendedanvil;
 
-import org.bukkit.command.*;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-import java.util.Collections;
-import java.util.List;
+public final class ExtendedAnvilAdminCommand implements CommandExecutor {
 
-public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabCompleter {
+    private final AdminMenu adminMenu;
 
-    private final ExtendedAnvilSessionManager sessions;
-
-    public ExtendedAnvilAdminCommand(ExtendedAnvilSessionManager sessions) {
-        this.sessions = sessions;
+    public ExtendedAnvilAdminCommand() {
+        this.adminMenu = new AdminMenu(); // no-arg constructor, as your class defines
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("This command can only be used by players.");
+            sender.sendMessage("Players only.");
             return true;
         }
 
         if (!player.hasPermission("entitycore.extendedanvil.admin")) {
-            player.sendMessage("§cOperator only.");
+            player.sendMessage("§cYou do not have permission to use this.");
             return true;
         }
 
-        sessions.openAdminMenu(player);
+        adminMenu.open(player);
         return true;
-    }
-
-    @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        return Collections.emptyList();
     }
 }
