@@ -1,14 +1,16 @@
 package com.entitycore.modules.anvil;
 
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
 
 public final class DisenchantPriority {
 
-    // Fixed priority, no player selection.
-    // If an enchant isn't listed, it falls back to alphabetical by key.
-    private static final List<String> PRIORITY = List.of(
+    private DisenchantPriority() {}
+
+    // Default fallback order if config is empty.
+    private static final List<String> DEFAULT_PRIORITY = Arrays.asList(
             "minecraft:mending",
             "minecraft:unbreaking",
             "minecraft:efficiency",
@@ -33,32 +35,37 @@ public final class DisenchantPriority {
             "minecraft:channeling",
             "minecraft:loyalty",
             "minecraft:riptide",
-            // curses included and removable
             "minecraft:binding_curse",
             "minecraft:vanishing_curse"
     );
 
-    private DisenchantPriority() {}
-
-    public static Enchantment chooseOne(Set<Enchantment> present) {
+    public static Enchantment chooseOne(JavaPlugin plugin, Set<Enchantment> present) {
         if (present == null || present.isEmpty()) return null;
 
-        Map<String, Enchantment> byKey = new HashMap<>();
+        Map<String, Enchantment> byKey = new HashMap<String, Enchantment>();
         for (Enchantment e : present) {
             if (e == null) continue;
             byKey.put(e.getKey().toString(), e);
         }
 
-        for (String k : PRIORITY) {
-            Enchantment e = byKey.get(k);
-            if (e != null) return e;
+        List<String> configured = plugin.getConfig().getStringList("extendedanvil.disenchant.priority");
+        List<String> order = (configured != null && !configured.isEmpty()) ? configured : DEFAULT_PRIORITY;
+
+        for (String k : order) {
+            if (k == null) continue;
+            Enchantment match = byKey.get(k.trim().toLowerCase(Locale.ROOT));
+            if (match != null) return match;
         }
 
-        // Fallback deterministic pick
-        return present.stream()
-                .filter(Objects::nonNull)
-                .sorted(Comparator.comparing(e -> e.getKey().toString()))
-                .findFirst()
-                .orElse(null);
+        // Fallback deterministic: alphabetical by key
+        List<Enchantment> list = new ArrayList<Enchantment>(present);
+        Collections.sort(list, new Comparator<Enchantment>() {
+            @Override
+            public int compare(Enchantment a, Enchantment b) {
+                return a.getKey().toString().compareTo(b.getKey().toString());
+            }
+        });
+
+        return list.isEmpty() ? null : list.get(0);
     }
 }
