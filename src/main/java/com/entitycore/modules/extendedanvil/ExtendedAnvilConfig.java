@@ -7,16 +7,8 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
-/**
- * ExtendedAnvil config backed by plugins/EntityCore/extendedanvil.yml.
- *
- * Operator GUI edits this file.
- */
 public final class ExtendedAnvilConfig {
 
     private static final String FILE_NAME = "extendedanvil.yml";
@@ -25,13 +17,20 @@ public final class ExtendedAnvilConfig {
     private File file;
     private YamlConfiguration yml;
 
-    // Defaults (can be tuned in Operator GUI)
+    // Refund tuning (LEVELS, not raw XP)
     private int refundPercentFirst = 75;
     private int refundPercentSecond = 25;
     private int refundPercentLater = 0;
-    private int xpPerEnchantLevel = 12;
+
+    /** How many "value levels" each enchant level is worth for refund math. */
+    private int refundLevelsPerEnchantLevel = 4;
+
     private boolean allowCurseRemoval = true;
-    private int applyBookLevelCost = 0;
+
+    // Apply-book cost tuning (LEVELS, scales with book size)
+    private int applyCostBaseLevels = 2;
+    private int applyCostPerEnchant = 1;
+    private int applyCostPerStoredLevel = 1;
 
     /** Enchant priority list (top = removed first). Stored as namespaced keys. */
     private final List<String> priority = new ArrayList<>();
@@ -50,9 +49,13 @@ public final class ExtendedAnvilConfig {
         refundPercentFirst = clampInt(yml.getInt("refund.percent.first", refundPercentFirst), 0, 100);
         refundPercentSecond = clampInt(yml.getInt("refund.percent.second", refundPercentSecond), 0, 100);
         refundPercentLater = clampInt(yml.getInt("refund.percent.later", refundPercentLater), 0, 100);
-        xpPerEnchantLevel = clampInt(yml.getInt("refund.xpPerEnchantLevel", xpPerEnchantLevel), 0, 1000);
+
+        refundLevelsPerEnchantLevel = clampInt(yml.getInt("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel), 0, 1000);
         allowCurseRemoval = yml.getBoolean("disenchant.allowCurseRemoval", allowCurseRemoval);
-        applyBookLevelCost = clampInt(yml.getInt("enchant.applyBookLevelCost", applyBookLevelCost), 0, 1000);
+
+        applyCostBaseLevels = clampInt(yml.getInt("enchant.applyCost.baseLevels", applyCostBaseLevels), 0, 1000);
+        applyCostPerEnchant = clampInt(yml.getInt("enchant.applyCost.levelsPerEnchant", applyCostPerEnchant), 0, 1000);
+        applyCostPerStoredLevel = clampInt(yml.getInt("enchant.applyCost.levelsPerStoredLevel", applyCostPerStoredLevel), 0, 1000);
 
         priority.clear();
         List<String> raw = yml.getStringList("disenchant.priority");
@@ -74,13 +77,20 @@ public final class ExtendedAnvilConfig {
 
     public void save() {
         if (yml == null || file == null) return;
+
         yml.set("refund.percent.first", refundPercentFirst);
         yml.set("refund.percent.second", refundPercentSecond);
         yml.set("refund.percent.later", refundPercentLater);
-        yml.set("refund.xpPerEnchantLevel", xpPerEnchantLevel);
+        yml.set("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel);
+
         yml.set("disenchant.allowCurseRemoval", allowCurseRemoval);
-        yml.set("enchant.applyBookLevelCost", applyBookLevelCost);
+
+        yml.set("enchant.applyCost.baseLevels", applyCostBaseLevels);
+        yml.set("enchant.applyCost.levelsPerEnchant", applyCostPerEnchant);
+        yml.set("enchant.applyCost.levelsPerStoredLevel", applyCostPerStoredLevel);
+
         yml.set("disenchant.priority", new ArrayList<>(priority));
+
         try {
             yml.save(file);
         } catch (IOException e) {
@@ -101,14 +111,20 @@ public final class ExtendedAnvilConfig {
     public int getRefundPercentLater() { return refundPercentLater; }
     public void setRefundPercentLater(int v) { refundPercentLater = clampInt(v, 0, 100); }
 
-    public int getXpPerEnchantLevel() { return xpPerEnchantLevel; }
-    public void setXpPerEnchantLevel(int v) { xpPerEnchantLevel = clampInt(v, 0, 1000); }
+    public int getRefundLevelsPerEnchantLevel() { return refundLevelsPerEnchantLevel; }
+    public void setRefundLevelsPerEnchantLevel(int v) { refundLevelsPerEnchantLevel = clampInt(v, 0, 1000); }
 
     public boolean isAllowCurseRemoval() { return allowCurseRemoval; }
     public void setAllowCurseRemoval(boolean v) { allowCurseRemoval = v; }
 
-    public int getApplyBookLevelCost() { return applyBookLevelCost; }
-    public void setApplyBookLevelCost(int v) { applyBookLevelCost = clampInt(v, 0, 1000); }
+    public int getApplyCostBaseLevels() { return applyCostBaseLevels; }
+    public void setApplyCostBaseLevels(int v) { applyCostBaseLevels = clampInt(v, 0, 1000); }
+
+    public int getApplyCostPerEnchant() { return applyCostPerEnchant; }
+    public void setApplyCostPerEnchant(int v) { applyCostPerEnchant = clampInt(v, 0, 1000); }
+
+    public int getApplyCostPerStoredLevel() { return applyCostPerStoredLevel; }
+    public void setApplyCostPerStoredLevel(int v) { applyCostPerStoredLevel = clampInt(v, 0, 1000); }
 
     public List<String> getPriority() { return priority; }
 
@@ -117,8 +133,10 @@ public final class ExtendedAnvilConfig {
         key = key.toLowerCase();
         int old = priority.indexOf(key);
         if (old < 0) return;
+
         newIndex = Math.max(0, Math.min(priority.size() - 1, newIndex));
         if (old == newIndex) return;
+
         priority.remove(old);
         priority.add(newIndex, key);
     }
