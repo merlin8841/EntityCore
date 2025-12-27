@@ -16,94 +16,123 @@ public final class PlayerMenu {
     public static final String TITLE = "Extended Anvil";
     public static final int SIZE = 27;
 
-    public static final int SLOT_ITEM = 10;
-    public static final int SLOT_BOOK = 12;
-    public static final int SLOT_RESULT = 16;
+    // three functional slots
+    public static final int SLOT_ITEM = 11;
+    public static final int SLOT_BOOK = 15;
+    public static final int SLOT_OUTPUT = 13;
 
-    private static final Map<Inventory, Integer> lastCost = new HashMap<>();
+    public static final int SLOT_CLOSE = 26;
+
+    public enum Mode { NONE, DISENCHANT, APPLY }
 
     public static Inventory create(Player player) {
-        Inventory inv = Bukkit.createInventory(player, SIZE, TITLE);
-        decorate(inv);
-        return inv;
+        return Bukkit.createInventory(player, SIZE, TITLE);
     }
 
-    public static void decorate(Inventory inv) {
-        ItemStack glass = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
-        ItemMeta m = glass.getItemMeta();
-        if (m != null) {
-            m.setDisplayName(" ");
-            glass.setItemMeta(m);
-        }
-
-        for (int i = 0; i < SIZE; i++) inv.setItem(i, glass);
+    public static void renderStatic(Inventory inv) {
+        ItemStack filler = pane(Material.BLACK_STAINED_GLASS_PANE, " ");
+        for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
         inv.setItem(SLOT_ITEM, null);
         inv.setItem(SLOT_BOOK, null);
-        inv.setItem(SLOT_RESULT, null);
+        inv.setItem(SLOT_OUTPUT, null);
+
+        inv.setItem(SLOT_CLOSE, button(Material.BARRIER, "§cClose", List.of()));
     }
 
-    public static void refreshPreview(Player player,
-                                      Inventory inv,
-                                      ExtendedAnvilConfig config,
-                                      EnchantCostService costService) {
-
-        inv.setItem(SLOT_RESULT, null);
-        lastCost.put(inv, 0);
-
-        ItemStack item = inv.getItem(SLOT_ITEM);
-        ItemStack book = inv.getItem(SLOT_BOOK);
-
-        if (item == null || item.getType() == Material.AIR) return;
-        if (book == null || book.getType() == Material.AIR) return;
-
-        // Disenchant
-        if (book.getType() == Material.BOOK) {
-            Map<Enchantment, Integer> ench = item.getEnchantments();
-            if (ench == null || ench.isEmpty()) return;
-
-            boolean removeAll = book.getAmount() == 1;
-
-            LinkedHashMap<Enchantment, Integer> removed = new LinkedHashMap<>();
-            if (removeAll) {
-                // all enchants (sorted)
-                List<Enchantment> list = new ArrayList<>(ench.keySet());
-                list.sort(Comparator.comparing(e -> e.getKey().toString()));
-                for (Enchantment e : list) removed.put(e, ench.get(e));
-            } else {
-                Enchantment next = config.chooseNextDisenchant(ench.keySet());
-                if (next == null) return;
-                removed.put(next, ench.get(next));
-            }
-
-            ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
-            ItemMeta meta = out.getItemMeta();
-            if (meta instanceof EnchantmentStorageMeta esm) {
-                for (Map.Entry<Enchantment, Integer> e : removed.entrySet()) {
-                    esm.addStoredEnchant(e.getKey(), e.getValue(), false);
-                }
-                out.setItemMeta(esm);
-            }
-
-            inv.setItem(SLOT_RESULT, out);
-
-            // cost placeholder (disenchant cost is handled by refund service later)
-            lastCost.put(inv, 1);
-            return;
-        }
-
-        // Apply enchanted book
-        if (book.getType() == Material.ENCHANTED_BOOK) {
-            EnchantCostService.ApplyPreview p = costService.previewApply(player, item, book);
-            if (!p.canApply || p.result == null) return;
-
-            inv.setItem(SLOT_RESULT, p.result.clone());
-            lastCost.put(inv, Math.max(0, p.levelCost));
-        }
+    public static boolean isInputSlot(int slot) {
+        return slot == SLOT_ITEM || slot == SLOT_BOOK;
     }
 
-    public static int getLastCost(Inventory inv) {
-        return lastCost.getOrDefault(inv, 0);
+    public static Mode inferMode(Inventory inv) {
+        if (inv == null) return Mode.NONE;
+        ItemStack right = inv.getItem(SLOT_BOOK);
+        if (right == null || right.getType() == Material.AIR) return Mode.NONE;
+        if (right.getType() == Material.BOOK) return Mode.DISENCHANT;
+        if (right.getType() == Material.ENCHANTED_BOOK) return Mode.APPLY;
+        return Mode.NONE;
+    }
+
+    public static ItemStack previewDisenchantBook(LinkedHashMap<Enchantment, Integer> removed, boolean removeAll) {
+        ItemStack out = buildEnchantedBook(removed);
+        ItemMeta meta = out.getItemMeta();
+        if (meta != null) {
+            meta.setLore(List.of(
+                    "§7Mode: §bDisenchant",
+                    "§7Consumes: §f1 book",
+                    removeAll ? "§7Removes: §fall enchants" : "§7Removes: §fone enchant (priority)",
+                    "§7Click result to craft."
+            ));
+            out.setItemMeta(meta);
+        }
+        return out;
+    }
+
+    public static ItemStack previewApplyResult(ItemStack result, int cost) {
+        ItemStack out = result.clone();
+        ItemMeta meta = out.getItemMeta();
+        if (meta != null) {
+            meta.setLore(List.of(
+                    "§7Mode: §dApply",
+                    "§7Cost: §f" + cost + " levels",
+                    "§7Click result to craft."
+            ));
+            out.setItemMeta(meta);
+        }
+        return out;
+    }
+
+    public static LinkedHashMap<Enchantment, Integer> sortedAllForBook(Map<Enchantment, Integer> ench) {
+        List<Enchantment> list = new ArrayList<>(ench.keySet());
+        list.sort(Comparator.comparing(a -> a.getKey().toString()));
+        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<>();
+        for (Enchantment e : list) out.put(e, ench.get(e));
+        return out;
+    }
+
+    public static ItemStack buildEnchantedBook(LinkedHashMap<Enchantment, Integer> enchants) {
+        ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
+        ItemMeta meta = out.getItemMeta();
+        if (meta instanceof EnchantmentStorageMeta) {
+            EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
+            for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
+                esm.addStoredEnchant(e.getKey(), e.getValue(), false);
+            }
+            out.setItemMeta(esm);
+        }
+        return out;
+    }
+
+    public static ItemStack errorItem(String msg) {
+        ItemStack it = new ItemStack(Material.BARRIER, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName("§c" + msg);
+            meta.setLore(List.of("§7Fix inputs and try again."));
+            it.setItemMeta(meta);
+        }
+        return it;
+    }
+
+    private static ItemStack pane(Material mat, String name) {
+        ItemStack it = new ItemStack(mat, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(name);
+            it.setItemMeta(meta);
+        }
+        return it;
+    }
+
+    private static ItemStack button(Material mat, String name, List<String> lore) {
+        ItemStack it = new ItemStack(mat, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(name);
+            if (lore != null && !lore.isEmpty()) meta.setLore(lore);
+            it.setItemMeta(meta);
+        }
+        return it;
     }
 
     private PlayerMenu() {}
