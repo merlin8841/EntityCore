@@ -10,7 +10,7 @@ import org.bukkit.plugin.java.JavaPlugin;
  * Extended Anvil (chest GUI) module.
  *
  * Player GUI:
- *  - /ea (permission: entitycore.extendedanvil.use) [requires looking at an anvil via command handler]
+ *  - /ea (permission: entitycore.extendedanvil.use) [requires looking at an anvil]
  * Operator GUI:
  *  - /eaadmin (permission: entitycore.extendedanvil.admin)
  */
@@ -24,6 +24,7 @@ public final class ExtendedAnvilGuiModule implements Module {
     private ExtendedAnvilGui playerGui;
     private ExtendedAnvilAdminGui adminGui;
     private ExtendedAnvilPriorityGui priorityGui;
+    private ExtendedAnvilEnchantCostGui costGui;
 
     private ExtendedAnvilListener listener;
 
@@ -44,11 +45,12 @@ public final class ExtendedAnvilGuiModule implements Module {
 
         this.service = new ExtendedAnvilService(plugin, config);
 
-        this.playerGui = new ExtendedAnvilGui(plugin, config, service);
         this.adminGui = new ExtendedAnvilAdminGui(plugin, config);
         this.priorityGui = new ExtendedAnvilPriorityGui(plugin, config);
+        this.costGui = new ExtendedAnvilEnchantCostGui(config, adminGui);
+        this.playerGui = new ExtendedAnvilGui(plugin, config, service);
 
-        this.listener = new ExtendedAnvilListener(plugin, config, service, playerGui, adminGui, priorityGui);
+        this.listener = new ExtendedAnvilListener(plugin, config, service, playerGui, adminGui, priorityGui, costGui);
         Bukkit.getPluginManager().registerEvents(listener, plugin);
 
         this.playerCommand = new ExtendedAnvilCommand(playerGui);
@@ -74,12 +76,9 @@ public final class ExtendedAnvilGuiModule implements Module {
                 + " refund=" + config.getRefundPercentFirst() + "%/"
                 + config.getRefundPercentSecond() + "%/"
                 + config.getRefundPercentLater() + "%"
-                + ", refundLvlsPerEnchantLvl=" + config.getRefundLevelsPerEnchantLevel()
+                + ", fallbackRefundLvlsPerEnchantLvl=" + config.getRefundLevelsPerEnchantLevel()
                 + ", allowCurseRemoval=" + config.isAllowCurseRemoval()
-                + ", applyCost(base/perEnchant/perStoredLvl)="
-                + config.getApplyCostBaseLevels() + "/"
-                + config.getApplyCostPerEnchant() + "/"
-                + config.getApplyCostPerStoredLevel()
+                + ", priorWork(cost/inc)=" + config.getPriorWorkCostPerStep() + "/" + config.getPriorWorkIncrementPerApply()
         );
     }
 
@@ -95,6 +94,7 @@ public final class ExtendedAnvilGuiModule implements Module {
         playerGui = null;
         adminGui = null;
         priorityGui = null;
+        costGui = null;
         listener = null;
         playerCommand = null;
         adminCommand = null;
