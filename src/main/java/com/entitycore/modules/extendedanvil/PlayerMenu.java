@@ -5,6 +5,7 @@ import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryType;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
@@ -16,132 +17,131 @@ import java.util.*;
 public final class PlayerMenu {
 
     public static final String TITLE = "Extended Anvil";
-    public static final int SIZE = 54;
 
-    public static final int SLOT_ITEM = 20;
-    public static final int SLOT_BOOK = 29;
-    public static final int SLOT_OUTPUT = 24;
+    // Real anvil inventory slots
+    public static final int SLOT_ITEM = 0;   // left
+    public static final int SLOT_BOOK = 1;   // right
+    public static final int SLOT_OUTPUT = 2; // result
 
-    public static final int SLOT_MODE = 47;
-    public static final int SLOT_DO = 48;
-    public static final int SLOT_CLOSE = 53;
-
-    public enum Mode { DISENCHANT, APPLY }
+    public enum Mode { NONE, DISENCHANT, APPLY }
 
     public static Inventory create(Player player) {
-        Inventory inv = Bukkit.createInventory(player, SIZE, TITLE);
-
-        for (int i = 0; i < SIZE; i++) inv.setItem(i, glass());
-
-        inv.setItem(SLOT_ITEM, null);
-        inv.setItem(SLOT_BOOK, null);
-        inv.setItem(SLOT_OUTPUT, outputPlaceholder());
-
-        inv.setItem(SLOT_MODE, modeItem(Mode.DISENCHANT));
-        inv.setItem(SLOT_DO, doItem(Mode.DISENCHANT, "1 book = all, 2+ = one-by-one"));
-        inv.setItem(SLOT_CLOSE, button(Material.BARRIER, "§cClose", Collections.emptyList()));
-
-        return inv;
+        // Real anvil UI
+        return Bukkit.createInventory(player, InventoryType.ANVIL, TITLE);
     }
 
     public static boolean isThis(InventoryView view) {
-        return view != null && TITLE.equals(view.getTitle());
+        return view != null && TITLE.equals(view.getTitle()) && view.getTopInventory().getType() == InventoryType.ANVIL;
     }
 
-    public static Mode getMode(Inventory inv) {
-        ItemStack it = inv.getItem(SLOT_MODE);
-        if (it == null || it.getType() == Material.AIR) return Mode.DISENCHANT;
-        ItemMeta meta = it.getItemMeta();
-        if (meta == null || meta.getLore() == null) return Mode.DISENCHANT;
-        for (String line : meta.getLore()) {
-            if (line != null && line.contains("MODE:APPLY")) return Mode.APPLY;
-        }
-        return Mode.DISENCHANT;
+    /**
+     * Mode is inferred automatically:
+     * - Right slot = BOOK => Disenchant
+     * - Right slot = ENCHANTED_BOOK => Apply
+     */
+    public static Mode inferMode(Inventory inv) {
+        if (inv == null || inv.getType() != InventoryType.ANVIL) return Mode.NONE;
+
+        ItemStack right = inv.getItem(SLOT_BOOK);
+        if (right == null || right.getType() == Material.AIR) return Mode.NONE;
+
+        if (right.getType() == Material.BOOK) return Mode.DISENCHANT;
+        if (right.getType() == Material.ENCHANTED_BOOK) return Mode.APPLY;
+
+        return Mode.NONE;
     }
 
-    public static void toggleMode(Inventory inv) {
-        Mode m = getMode(inv);
-        Mode next = (m == Mode.DISENCHANT) ? Mode.APPLY : Mode.DISENCHANT;
-        inv.setItem(SLOT_MODE, modeItem(next));
-    }
+    public static void refreshPreview(Player viewer,
+                                      Inventory inv,
+                                      JavaPlugin plugin,
+                                      ExtendedAnvilConfig cfg,
+                                      EnchantCostService costService) {
 
-    public static void refreshPreview(Player viewer, Inventory inv, JavaPlugin plugin, ExtendedAnvilConfig cfg, EnchantCostService costService) {
-        Mode mode = getMode(inv);
+        if (inv == null || inv.getType() != InventoryType.ANVIL) return;
 
         ItemStack item = inv.getItem(SLOT_ITEM);
-        ItemStack book = inv.getItem(SLOT_BOOK);
+        ItemStack right = inv.getItem(SLOT_BOOK);
+
+        // Default: clear output
+        inv.setItem(SLOT_OUTPUT, null);
+
+        Mode mode = inferMode(inv);
+        if (mode == Mode.NONE) return;
+
+        if (item == null || item.getType() == Material.AIR) return;
+
+        // no book-on-book behavior
+        if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
+            inv.setItem(SLOT_OUTPUT, errorItem("Can't use books as item"));
+            return;
+        }
 
         if (mode == Mode.DISENCHANT) {
-            inv.setItem(SLOT_DO, doItem(mode, "1 book = all, 2+ = one-by-one"));
-            if (item == null || item.getType() == Material.AIR || book == null || book.getType() != Material.BOOK) {
-                inv.setItem(SLOT_OUTPUT, outputPlaceholder());
-                return;
-            }
-            if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
-                inv.setItem(SLOT_OUTPUT, errorItem("No books", "You can't disenchant books."));
-                return;
-            }
+            if (right == null || right.getType() != Material.BOOK || right.getAmount() <= 0) return;
+
             Map<Enchantment, Integer> ench = item.getEnchantments();
             if (ench == null || ench.isEmpty()) {
-                inv.setItem(SLOT_OUTPUT, errorItem("No enchants", "Item has no enchantments."));
+                inv.setItem(SLOT_OUTPUT, errorItem("No enchantments"));
                 return;
             }
 
-            boolean removeAll = (book.getAmount() == 1);
+            boolean removeAll = (right.getAmount() == 1);
+
             LinkedHashMap<Enchantment, Integer> toRemove;
             if (removeAll) {
                 toRemove = sortedAllForBook(ench);
             } else {
                 Enchantment chosen = cfg.chooseNextDisenchant(ench.keySet());
                 if (chosen == null) {
-                    inv.setItem(SLOT_OUTPUT, errorItem("No target", "No enchant could be chosen."));
+                    inv.setItem(SLOT_OUTPUT, errorItem("No target enchant"));
                     return;
                 }
                 toRemove = new LinkedHashMap<>();
                 toRemove.put(chosen, ench.get(chosen));
             }
 
-            ItemStack out = buildEnchantedBook(toRemove);
+            ItemStack outBook = buildEnchantedBook(toRemove);
+
+            ItemMeta meta = outBook.getItemMeta();
+            if (meta != null) {
+                meta.setLore(List.of(
+                        "§7Mode: §bDisenchant",
+                        "§7Consumes: §f1 book",
+                        right.getAmount() == 1
+                                ? "§7Removes: §fall enchants"
+                                : "§7Removes: §fone enchant (priority)"
+                ));
+                outBook.setItemMeta(meta);
+            }
+
+            inv.setItem(SLOT_OUTPUT, outBook);
+            return;
+        }
+
+        // APPLY (vanilla-exact scaling via your reflection simulator)
+        if (mode == Mode.APPLY) {
+            if (right == null || right.getType() != Material.ENCHANTED_BOOK) return;
+
+            EnchantCostService.ApplyPreview preview = costService.previewApply(viewer, item, right);
+            if (!preview.canApply || preview.result == null || preview.result.getType() == Material.AIR) {
+                inv.setItem(SLOT_OUTPUT, errorItem("Nothing to apply"));
+                return;
+            }
+
+            ItemStack out = preview.result.clone();
             ItemMeta meta = out.getItemMeta();
             if (meta != null) {
                 meta.setLore(List.of(
-                        "§7Preview only. Click Output/Do.",
-                        "§7Consumes: §f1 Book"
+                        "§7Mode: §dApply",
+                        "§7Cost: §f" + preview.levelCost + " levels",
+                        "§7(Uses vanilla scaling)",
+                        "§7Click result to craft."
                 ));
                 out.setItemMeta(meta);
             }
+
             inv.setItem(SLOT_OUTPUT, out);
-            return;
         }
-
-        // APPLY (true vanilla scaling)
-        inv.setItem(SLOT_DO, doItem(mode, "Consumes 1 enchanted book"));
-        if (item == null || item.getType() == Material.AIR || book == null || book.getType() != Material.ENCHANTED_BOOK) {
-            inv.setItem(SLOT_OUTPUT, outputPlaceholder());
-            return;
-        }
-        if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
-            inv.setItem(SLOT_OUTPUT, errorItem("No books", "You can't apply to books."));
-            return;
-        }
-
-        EnchantCostService.ApplyPreview preview = costService.previewApply(viewer, item, book);
-        if (!preview.canApply || preview.result == null || preview.result.getType() == Material.AIR) {
-            inv.setItem(SLOT_OUTPUT, errorItem("Nothing to apply", "Conflicts or lower/equal levels."));
-            return;
-        }
-
-        ItemStack out = preview.result.clone();
-        ItemMeta meta = out.getItemMeta();
-        if (meta != null) {
-            meta.setLore(List.of(
-                    "§7Cost: §f" + preview.levelCost + " levels",
-                    "§7Scaling: §aVanilla exact",
-                    "§7Click Output/Do to apply."
-            ));
-            out.setItemMeta(meta);
-        }
-        inv.setItem(SLOT_OUTPUT, out);
     }
 
     public static LinkedHashMap<Enchantment, Integer> sortedAllForBook(Map<Enchantment, Integer> ench) {
@@ -169,44 +169,12 @@ public final class PlayerMenu {
         return leftovers == null || leftovers.isEmpty();
     }
 
-    private static ItemStack glass() {
-        ItemStack it = new ItemStack(Material.GRAY_STAINED_GLASS_PANE, 1);
+    private static ItemStack errorItem(String msg) {
+        ItemStack it = new ItemStack(Material.BARRIER, 1);
         ItemMeta meta = it.getItemMeta();
         if (meta != null) {
-            meta.setDisplayName(" ");
-            it.setItemMeta(meta);
-        }
-        return it;
-    }
-
-    private static ItemStack outputPlaceholder() {
-        return button(Material.BLACK_STAINED_GLASS_PANE, "§8Output", List.of("§7Put items in the input slots."));
-    }
-
-    private static ItemStack modeItem(Mode mode) {
-        if (mode == Mode.DISENCHANT) {
-            return button(Material.BOOK, "§bMode: Disenchant", List.of("§7MODE:DISENCHANT", "§7Click to switch"));
-        }
-        return button(Material.ENCHANTED_BOOK, "§dMode: Apply", List.of("§7MODE:APPLY", "§7Click to switch"));
-    }
-
-    private static ItemStack doItem(Mode mode, String hint) {
-        if (mode == Mode.DISENCHANT) {
-            return button(Material.ANVIL, "§aDisenchant", List.of("§7" + hint, "§7Click to perform."));
-        }
-        return button(Material.ANVIL, "§aApply Book", List.of("§7" + hint, "§7Click to perform."));
-    }
-
-    private static ItemStack errorItem(String title, String line) {
-        return button(Material.RED_STAINED_GLASS_PANE, "§c" + title, List.of("§7" + line));
-    }
-
-    private static ItemStack button(Material mat, String name, List<String> lore) {
-        ItemStack it = new ItemStack(mat, 1);
-        ItemMeta meta = it.getItemMeta();
-        if (meta != null) {
-            meta.setDisplayName(name);
-            if (lore != null && !lore.isEmpty()) meta.setLore(lore);
+            meta.setDisplayName("§c" + msg);
+            meta.setLore(List.of("§7Fix inputs and try again."));
             it.setItemMeta(meta);
         }
         return it;
