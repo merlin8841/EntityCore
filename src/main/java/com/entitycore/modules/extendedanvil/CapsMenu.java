@@ -7,7 +7,7 @@ import org.bukkit.inventory.Inventory;
 public final class CapsMenu {
 
     public static void open(Player player, ExtendedAnvilConfig config) {
-        Inventory inv = Bukkit.createInventory(player, 27, "Enchant Caps");
+        Inventory inv = Bukkit.createInventory(player, 54, "Extended Anvil Caps");
         player.openInventory(inv);
     }
 
