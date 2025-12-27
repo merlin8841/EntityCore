@@ -1,10 +1,14 @@
 package com.entitycore.modules.extendedanvil;
 
+import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
-import org.bukkit.event.inventory.*;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.PrepareAnvilEvent;
 import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
@@ -12,23 +16,32 @@ import java.util.*;
 public final class ExtendedAnvilSessionManager {
 
     private final JavaPlugin plugin;
-    private final EnchantCostService costService;
-    private final XpRefundService refundService;
     private final ExtendedAnvilConfig config;
+    private final XpRefundService refundService;
+    private final EnchantCostService costService;
 
     private final Set<UUID> active = new HashSet<>();
 
+    // admin menus (existing)
+    private AdminMenu adminMenu;
+    private CapsMenu capsMenu;
+    private PriorityMenu priorityMenu;
+
     public ExtendedAnvilSessionManager(JavaPlugin plugin,
-                                       EnchantCostService costService,
+                                       ExtendedAnvilConfig config,
                                        XpRefundService refundService,
-                                       ExtendedAnvilConfig config) {
+                                       EnchantCostService costService) {
         this.plugin = plugin;
-        this.costService = costService;
-        this.refundService = refundService;
         this.config = config;
+        this.refundService = refundService;
+        this.costService = costService;
+
+        this.adminMenu = new AdminMenu(this, config);
+        this.capsMenu = new CapsMenu(config);
+        this.priorityMenu = new PriorityMenu(config);
     }
 
-    /* ============================================================= */
+    /* ========================================================= */
 
     public void open(Player player) {
         active.add(player.getUniqueId());
@@ -43,28 +56,49 @@ public final class ExtendedAnvilSessionManager {
         return active.contains(player.getUniqueId());
     }
 
-    /* ============================================================= */
+    /* ========================================================= */
+    /* ADMIN                                                     */
+    /* ========================================================= */
+
+    public void openAdminMenu(Player player) {
+        adminMenu.open(player);
+    }
+
+    public void openCapsMenu(Player player) {
+        capsMenu.open(player);
+    }
+
+    public void openPriorityMenu(Player player) {
+        priorityMenu.open(player);
+    }
+
+    /* ========================================================= */
+    /* PREPARE                                                   */
+    /* ========================================================= */
 
     public void handlePrepare(PrepareAnvilEvent event) {
         if (!(event.getView().getPlayer() instanceof Player player)) return;
         if (!isActive(player)) return;
-        if (!(event.getInventory() instanceof AnvilInventory anvil)) return;
 
-        // CRITICAL: Kill vanilla 39-level cap EVERY TIME
+        if (!(event.getInventory() instanceof AnvilInventory)) return;
+        AnvilInventory anvil = (AnvilInventory) event.getInventory();
+
+        // KILL vanilla cap
         anvil.setMaximumRepairCost(999999);
         anvil.setRepairCost(0);
 
-        ItemStack left = anvil.getItem(0);
+        ItemStack item = anvil.getItem(0);
         ItemStack right = anvil.getItem(1);
 
-        if (left == null || right == null) {
+        if (item == null || right == null) {
             event.setResult(null);
             return;
         }
 
-        // DISENCHANT MODE (plain book)
-        if (right.getType() == org.bukkit.Material.BOOK) {
-            Map<Enchantment, Integer> enchants = left.getEnchantments();
+        /* ---------------- DISENCHANT ---------------- */
+
+        if (right.getType() == Material.BOOK) {
+            Map<Enchantment, Integer> enchants = item.getEnchantments();
             if (enchants.isEmpty()) {
                 event.setResult(null);
                 return;
@@ -80,18 +114,18 @@ public final class ExtendedAnvilSessionManager {
                 if (next != null) removed.put(next, enchants.get(next));
             }
 
-            ItemStack book = PlayerMenuHelper.buildEnchantedBook(removed);
-            event.setResult(book);
+            event.setResult(buildEnchantedBook(removed));
             anvil.setRepairCost(1);
             return;
         }
 
-        // APPLY MODE (enchanted book)
-        if (right.getType() == org.bukkit.Material.ENCHANTED_BOOK) {
-            EnchantCostService.ApplyPreview preview =
-                    costService.previewApply(player, left, right);
+        /* ---------------- APPLY ---------------- */
 
-            if (!preview.canApply) {
+        if (right.getType() == Material.ENCHANTED_BOOK) {
+            EnchantCostService.ApplyPreview preview =
+                    costService.previewApply(player, item, right);
+
+            if (!preview.canApply || preview.result == null) {
                 event.setResult(null);
                 return;
             }
@@ -101,29 +135,42 @@ public final class ExtendedAnvilSessionManager {
         }
     }
 
-    /* ============================================================= */
+    /* ========================================================= */
+    /* CLICK / DRAG                                              */
+    /* ========================================================= */
 
     public void handleClick(Player player, InventoryClickEvent event) {
         if (!isActive(player)) return;
-        if (!(event.getInventory() instanceof AnvilInventory anvil)) return;
+        if (!(event.getInventory() instanceof AnvilInventory)) return;
 
-        if (event.getRawSlot() != 2) return; // result slot only
-        ItemStack result = event.getCurrentItem();
-        if (result == null) return;
+        if (event.getRawSlot() != 2) return;
 
+        AnvilInventory anvil = (AnvilInventory) event.getInventory();
         int cost = anvil.getRepairCost();
+
         if (player.getLevel() < cost) {
             event.setCancelled(true);
             return;
         }
 
         player.setLevel(player.getLevel() - cost);
-        event.setCancelled(false);
     }
 
     public void handleDrag(Player player, InventoryDragEvent event) {
         if (isActive(player)) {
             event.setCancelled(true);
         }
+    }
+
+    /* ========================================================= */
+
+    private ItemStack buildEnchantedBook(Map<Enchantment, Integer> enchants) {
+        ItemStack book = new ItemStack(Material.ENCHANTED_BOOK, 1);
+        EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
+        for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
+            meta.addStoredEnchant(e.getKey(), e.getValue(), false);
+        }
+        book.setItemMeta(meta);
+        return book;
     }
 }
