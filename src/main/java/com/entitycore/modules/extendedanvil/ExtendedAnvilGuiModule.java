@@ -68,7 +68,6 @@ public final class ExtendedAnvilGuiModule implements Module {
         PluginCommand ea = plugin.getCommand("ea");
         if (ea != null) {
             ea.setExecutor(playerCommand);
-            ea.setTabCompleter(playerCommand);
         } else {
             plugin.getLogger().warning("[ExtendedAnvil] Missing command 'ea' in plugin.yml");
         }
@@ -76,7 +75,6 @@ public final class ExtendedAnvilGuiModule implements Module {
         PluginCommand eaAdmin = plugin.getCommand("eaadmin");
         if (eaAdmin != null) {
             eaAdmin.setExecutor(adminCommand);
-            eaAdmin.setTabCompleter(adminCommand);
         } else {
             plugin.getLogger().warning("[ExtendedAnvil] Missing command 'eaadmin' in plugin.yml");
         }
