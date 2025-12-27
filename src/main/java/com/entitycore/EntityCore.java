@@ -14,7 +14,7 @@ public final class EntityCore extends JavaPlugin {
         this.moduleManager = new ModuleManager(this);
 
         // Register modules here (manual registration by design)
-        moduleManager.register(new HopperFiltersModule(this));
+        moduleManager.register(new HopperFiltersModule());
         moduleManager.register(new ExtendedAnvilGuiModule(this));
 
         // Actually enables every registered module
