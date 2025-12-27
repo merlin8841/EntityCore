@@ -31,57 +31,74 @@ public final class PlayerMenu {
     public static void decorate(Inventory inv) {
         ItemStack glass = new ItemStack(Material.GRAY_STAINED_GLASS_PANE);
         ItemMeta m = glass.getItemMeta();
-        m.setDisplayName(" ");
-        glass.setItemMeta(m);
-
-        for (int i = 0; i < SIZE; i++) {
-            inv.setItem(i, glass);
+        if (m != null) {
+            m.setDisplayName(" ");
+            glass.setItemMeta(m);
         }
+
+        for (int i = 0; i < SIZE; i++) inv.setItem(i, glass);
 
         inv.setItem(SLOT_ITEM, null);
         inv.setItem(SLOT_BOOK, null);
         inv.setItem(SLOT_RESULT, null);
     }
 
-    public static void refreshPreview(
-            Player player,
-            Inventory inv,
-            ExtendedAnvilConfig config,
-            EnchantCostService costService
-    ) {
+    public static void refreshPreview(Player player,
+                                      Inventory inv,
+                                      ExtendedAnvilConfig config,
+                                      EnchantCostService costService) {
+
         inv.setItem(SLOT_RESULT, null);
         lastCost.put(inv, 0);
 
         ItemStack item = inv.getItem(SLOT_ITEM);
         ItemStack book = inv.getItem(SLOT_BOOK);
 
-        if (item == null || book == null) return;
+        if (item == null || item.getType() == Material.AIR) return;
+        if (book == null || book.getType() == Material.AIR) return;
 
+        // Disenchant
         if (book.getType() == Material.BOOK) {
             Map<Enchantment, Integer> ench = item.getEnchantments();
-            if (ench.isEmpty()) return;
+            if (ench == null || ench.isEmpty()) return;
 
-            Enchantment target = config.chooseNextDisenchant(ench.keySet());
-            if (target == null) return;
+            boolean removeAll = book.getAmount() == 1;
 
-            ItemStack out = new ItemStack(Material.ENCHANTED_BOOK);
-            EnchantmentStorageMeta meta = (EnchantmentStorageMeta) out.getItemMeta();
-            meta.addStoredEnchant(target, ench.get(target), false);
-            out.setItemMeta(meta);
+            LinkedHashMap<Enchantment, Integer> removed = new LinkedHashMap<>();
+            if (removeAll) {
+                // all enchants (sorted)
+                List<Enchantment> list = new ArrayList<>(ench.keySet());
+                list.sort(Comparator.comparing(e -> e.getKey().toString()));
+                for (Enchantment e : list) removed.put(e, ench.get(e));
+            } else {
+                Enchantment next = config.chooseNextDisenchant(ench.keySet());
+                if (next == null) return;
+                removed.put(next, ench.get(next));
+            }
+
+            ItemStack out = new ItemStack(Material.ENCHANTED_BOOK, 1);
+            ItemMeta meta = out.getItemMeta();
+            if (meta instanceof EnchantmentStorageMeta esm) {
+                for (Map.Entry<Enchantment, Integer> e : removed.entrySet()) {
+                    esm.addStoredEnchant(e.getKey(), e.getValue(), false);
+                }
+                out.setItemMeta(esm);
+            }
 
             inv.setItem(SLOT_RESULT, out);
+
+            // cost placeholder (disenchant cost is handled by refund service later)
             lastCost.put(inv, 1);
             return;
         }
 
+        // Apply enchanted book
         if (book.getType() == Material.ENCHANTED_BOOK) {
-            EnchantCostService.ApplyPreview preview =
-                    costService.previewApply(player, item, book);
+            EnchantCostService.ApplyPreview p = costService.previewApply(player, item, book);
+            if (!p.canApply || p.result == null) return;
 
-            if (!preview.canApply) return;
-
-            inv.setItem(SLOT_RESULT, preview.result.clone());
-            lastCost.put(inv, preview.levelCost);
+            inv.setItem(SLOT_RESULT, p.result.clone());
+            lastCost.put(inv, Math.max(0, p.levelCost));
         }
     }
 
