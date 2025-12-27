@@ -10,8 +10,14 @@ import org.bukkit.entity.Player;
 import java.util.Collections;
 import java.util.List;
 
-/** /eaadmin opens Operator settings GUI. */
+/**
+ * /eaadmin opens Operator settings GUI.
+ *
+ * Operator-only (per EntityCore permission tier rules).
+ */
 public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabCompleter {
+
+    public static final String PERMISSION = "entitycore.extendedanvil.admin";
 
     private final ExtendedAnvilAdminGui gui;
 
@@ -21,15 +27,31 @@ public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabComp
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        // Player-only
         if (!(sender instanceof Player player)) {
-            sender.sendMessage("Players only.");
+            sender.sendMessage(ChatColor.RED + "This command can only be used in-game.");
             return true;
         }
-        if (!player.hasPermission("entitycore.extendedanvil.admin")) {
+
+        // Operator permission
+        if (!player.hasPermission(PERMISSION)) {
             player.sendMessage(ChatColor.RED + "No permission.");
             return true;
         }
-        gui.open(player);
+
+        // Safety guard (prevents NPE if module wiring ever breaks)
+        if (gui == null) {
+            player.sendMessage(ChatColor.RED + "ExtendedAnvil admin GUI is not available (module not initialized).");
+            return true;
+        }
+
+        try {
+            gui.open(player);
+        } catch (Throwable t) {
+            player.sendMessage(ChatColor.RED + "Failed to open ExtendedAnvil admin GUI. Check console for details.");
+            t.printStackTrace();
+        }
+
         return true;
     }
 
