@@ -16,16 +16,19 @@ public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabComp
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!(sender instanceof Player player)) {
+        if (!(sender instanceof Player)) {
             sender.sendMessage("This command can only be used by players.");
             return true;
         }
+
+        Player player = (Player) sender;
+
         if (!player.hasPermission("entitycore.extendedanvil.admin")) {
             player.sendMessage("§cYou don't have permission to use this.");
             return true;
         }
 
-        menu.open(player);
+        menu.openMain(player);
         return true;
     }
 
