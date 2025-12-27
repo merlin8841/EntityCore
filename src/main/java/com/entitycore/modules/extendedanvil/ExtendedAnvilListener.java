@@ -2,10 +2,9 @@ package com.entitycore.modules.extendedanvil;
 
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
-import org.bukkit.event.inventory.*;
-import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
 
 public final class ExtendedAnvilListener implements Listener {
 
@@ -15,34 +14,34 @@ public final class ExtendedAnvilListener implements Listener {
         this.sessions = sessions;
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    public void onPrepare(PrepareAnvilEvent event) {
-        sessions.handlePrepare(event);
-    }
+    @EventHandler
+    public void onClick(InventoryClickEvent e) {
+        if (!(e.getWhoClicked() instanceof Player player)) return;
+        if (!sessions.isPlayerMenu(player, e.getInventory())) return;
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    public void onClick(InventoryClickEvent event) {
-        if (event.getWhoClicked() instanceof Player player) {
-            sessions.handleClick(player, event);
+        if (e.getSlot() == PlayerMenu.SLOT_RESULT) {
+            e.setCancelled(true);
+            sessions.completeCraft(player, e.getInventory());
+            return;
         }
-    }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
-    public void onDrag(InventoryDragEvent event) {
-        if (event.getWhoClicked() instanceof Player player) {
-            sessions.handleDrag(player, event);
+        if (e.getSlot() != PlayerMenu.SLOT_ITEM &&
+            e.getSlot() != PlayerMenu.SLOT_BOOK) {
+            e.setCancelled(true);
+            return;
         }
-    }
 
-    @EventHandler(priority = EventPriority.MONITOR)
-    public void onClose(InventoryCloseEvent event) {
-        if (event.getPlayer() instanceof Player player) {
-            sessions.handleClose(player);
-        }
+        Bukkit.getScheduler().runTaskLater(
+                sessions.getPlugin(),
+                () -> sessions.refresh(player, e.getInventory()),
+                1L
+        );
     }
 
     @EventHandler
-    public void onQuit(PlayerQuitEvent event) {
-        sessions.handleClose(event.getPlayer());
+    public void onClose(InventoryCloseEvent e) {
+        if (e.getPlayer() instanceof Player p) {
+            sessions.close(p);
+        }
     }
 }
