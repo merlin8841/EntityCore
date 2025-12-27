@@ -2,6 +2,7 @@ package com.entitycore.modules.extendedanvil;
 
 import org.bukkit.NamespacedKey;
 import org.bukkit.enchantments.Enchantment;
+import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -22,15 +23,24 @@ public final class ExtendedAnvilConfig {
     private int refundPercentSecond = 25;
     private int refundPercentLater = 0;
 
-    /** How many "value levels" each enchant level is worth for refund math. */
+    /** Fallback refund value when a book/item has no stored cost metadata. */
     private int refundLevelsPerEnchantLevel = 4;
 
     private boolean allowCurseRemoval = true;
 
-    // Apply-book cost tuning (LEVELS, scales with book size)
-    private int applyCostBaseLevels = 2;
-    private int applyCostPerEnchant = 1;
-    private int applyCostPerStoredLevel = 1;
+    // Global adders (keep simple defaults; most balance comes from per-enchant cost)
+    private int applyCostGlobalBaseLevels = 0;
+    private int applyCostPerEnchantAdd = 0;
+    private int applyCostPerStoredLevelAdd = 0;
+
+    // Vanilla-like "prior work" penalty
+    private int priorWorkCostPerStep = 1;
+    private int priorWorkIncrementPerApply = 1;
+
+    /** Per-enchant base costs (LEVELS). */
+    private final Map<String, Integer> enchantBaseCost = new LinkedHashMap<>();
+    /** Per-enchant per-level add (LEVELS per level above 1). */
+    private final Map<String, Integer> enchantPerLevelCost = new LinkedHashMap<>();
 
     /** Enchant priority list (top = removed first). Stored as namespaced keys. */
     private final List<String> priority = new ArrayList<>();
@@ -53,10 +63,32 @@ public final class ExtendedAnvilConfig {
         refundLevelsPerEnchantLevel = clampInt(yml.getInt("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel), 0, 1000);
         allowCurseRemoval = yml.getBoolean("disenchant.allowCurseRemoval", allowCurseRemoval);
 
-        applyCostBaseLevels = clampInt(yml.getInt("enchant.applyCost.baseLevels", applyCostBaseLevels), 0, 1000);
-        applyCostPerEnchant = clampInt(yml.getInt("enchant.applyCost.levelsPerEnchant", applyCostPerEnchant), 0, 1000);
-        applyCostPerStoredLevel = clampInt(yml.getInt("enchant.applyCost.levelsPerStoredLevel", applyCostPerStoredLevel), 0, 1000);
+        applyCostGlobalBaseLevels = clampInt(yml.getInt("enchant.applyCost.globalBaseLevels", applyCostGlobalBaseLevels), 0, 1000);
+        applyCostPerEnchantAdd = clampInt(yml.getInt("enchant.applyCost.addPerEnchant", applyCostPerEnchantAdd), 0, 1000);
+        applyCostPerStoredLevelAdd = clampInt(yml.getInt("enchant.applyCost.addPerStoredLevel", applyCostPerStoredLevelAdd), 0, 1000);
 
+        priorWorkCostPerStep = clampInt(yml.getInt("enchant.priorWork.costPerStep", priorWorkCostPerStep), 0, 1000);
+        priorWorkIncrementPerApply = clampInt(yml.getInt("enchant.priorWork.incrementPerApply", priorWorkIncrementPerApply), 0, 100);
+
+        // Per-enchant costs
+        enchantBaseCost.clear();
+        enchantPerLevelCost.clear();
+        ConfigurationSection baseSec = yml.getConfigurationSection("enchant.baseCost");
+        ConfigurationSection perLvlSec = yml.getConfigurationSection("enchant.perLevelCost");
+        if (baseSec != null) {
+            for (String k : baseSec.getKeys(false)) {
+                int v = clampInt(baseSec.getInt(k), 0, 1000);
+                enchantBaseCost.put(k.toLowerCase(), v);
+            }
+        }
+        if (perLvlSec != null) {
+            for (String k : perLvlSec.getKeys(false)) {
+                int v = clampInt(perLvlSec.getInt(k), 0, 1000);
+                enchantPerLevelCost.put(k.toLowerCase(), v);
+            }
+        }
+
+        // Priority list
         priority.clear();
         List<String> raw = yml.getStringList("disenchant.priority");
         if (raw != null) {
@@ -66,13 +98,15 @@ public final class ExtendedAnvilConfig {
             }
         }
 
+        // Seed missing entries so both YAML + GUI can manage everything
+        ensureAllKnownEnchantsPresent();
         if (priority.isEmpty()) {
             seedPriorityWithAllEnchants();
-            save();
         } else {
-            ensureAllKnownEnchantsPresent();
-            save();
+            ensureAllKnownEnchantsInPriority();
         }
+
+        save();
     }
 
     public void save() {
@@ -85,9 +119,15 @@ public final class ExtendedAnvilConfig {
 
         yml.set("disenchant.allowCurseRemoval", allowCurseRemoval);
 
-        yml.set("enchant.applyCost.baseLevels", applyCostBaseLevels);
-        yml.set("enchant.applyCost.levelsPerEnchant", applyCostPerEnchant);
-        yml.set("enchant.applyCost.levelsPerStoredLevel", applyCostPerStoredLevel);
+        yml.set("enchant.applyCost.globalBaseLevels", applyCostGlobalBaseLevels);
+        yml.set("enchant.applyCost.addPerEnchant", applyCostPerEnchantAdd);
+        yml.set("enchant.applyCost.addPerStoredLevel", applyCostPerStoredLevelAdd);
+
+        yml.set("enchant.priorWork.costPerStep", priorWorkCostPerStep);
+        yml.set("enchant.priorWork.incrementPerApply", priorWorkIncrementPerApply);
+
+        yml.set("enchant.baseCost", new LinkedHashMap<>(enchantBaseCost));
+        yml.set("enchant.perLevelCost", new LinkedHashMap<>(enchantPerLevelCost));
 
         yml.set("disenchant.priority", new ArrayList<>(priority));
 
@@ -98,9 +138,13 @@ public final class ExtendedAnvilConfig {
         }
     }
 
+    // --- Keys ---
+
     public NamespacedKey keyForRemovalCount(String enchantKey) {
         return ExtendedAnvilKeys.removalCount(plugin, enchantKey);
     }
+
+    // --- Refund ---
 
     public int getRefundPercentFirst() { return refundPercentFirst; }
     public void setRefundPercentFirst(int v) { refundPercentFirst = clampInt(v, 0, 100); }
@@ -117,14 +161,51 @@ public final class ExtendedAnvilConfig {
     public boolean isAllowCurseRemoval() { return allowCurseRemoval; }
     public void setAllowCurseRemoval(boolean v) { allowCurseRemoval = v; }
 
-    public int getApplyCostBaseLevels() { return applyCostBaseLevels; }
-    public void setApplyCostBaseLevels(int v) { applyCostBaseLevels = clampInt(v, 0, 1000); }
+    // --- Global apply cost adders ---
 
-    public int getApplyCostPerEnchant() { return applyCostPerEnchant; }
-    public void setApplyCostPerEnchant(int v) { applyCostPerEnchant = clampInt(v, 0, 1000); }
+    public int getApplyCostGlobalBaseLevels() { return applyCostGlobalBaseLevels; }
+    public void setApplyCostGlobalBaseLevels(int v) { applyCostGlobalBaseLevels = clampInt(v, 0, 1000); }
 
-    public int getApplyCostPerStoredLevel() { return applyCostPerStoredLevel; }
-    public void setApplyCostPerStoredLevel(int v) { applyCostPerStoredLevel = clampInt(v, 0, 1000); }
+    public int getApplyCostPerEnchantAdd() { return applyCostPerEnchantAdd; }
+    public void setApplyCostPerEnchantAdd(int v) { applyCostPerEnchantAdd = clampInt(v, 0, 1000); }
+
+    public int getApplyCostPerStoredLevelAdd() { return applyCostPerStoredLevelAdd; }
+    public void setApplyCostPerStoredLevelAdd(int v) { applyCostPerStoredLevelAdd = clampInt(v, 0, 1000); }
+
+    // --- Prior work ---
+
+    public int getPriorWorkCostPerStep() { return priorWorkCostPerStep; }
+    public void setPriorWorkCostPerStep(int v) { priorWorkCostPerStep = clampInt(v, 0, 1000); }
+
+    public int getPriorWorkIncrementPerApply() { return priorWorkIncrementPerApply; }
+    public void setPriorWorkIncrementPerApply(int v) { priorWorkIncrementPerApply = clampInt(v, 0, 100); }
+
+    // --- Per-enchant costs ---
+
+    public Map<String, Integer> getEnchantBaseCostMap() { return enchantBaseCost; }
+    public Map<String, Integer> getEnchantPerLevelCostMap() { return enchantPerLevelCost; }
+
+    public int getEnchantBaseCost(String enchantKey) {
+        if (enchantKey == null) return 0;
+        return enchantBaseCost.getOrDefault(enchantKey.toLowerCase(), 0);
+    }
+
+    public void setEnchantBaseCost(String enchantKey, int v) {
+        if (enchantKey == null) return;
+        enchantBaseCost.put(enchantKey.toLowerCase(), clampInt(v, 0, 1000));
+    }
+
+    public int getEnchantPerLevelCost(String enchantKey) {
+        if (enchantKey == null) return 0;
+        return enchantPerLevelCost.getOrDefault(enchantKey.toLowerCase(), 0);
+    }
+
+    public void setEnchantPerLevelCost(String enchantKey, int v) {
+        if (enchantKey == null) return;
+        enchantPerLevelCost.put(enchantKey.toLowerCase(), clampInt(v, 0, 1000));
+    }
+
+    // --- Priority ---
 
     public List<String> getPriority() { return priority; }
 
@@ -150,7 +231,7 @@ public final class ExtendedAnvilConfig {
         }
     }
 
-    private void ensureAllKnownEnchantsPresent() {
+    private void ensureAllKnownEnchantsInPriority() {
         Set<String> set = new LinkedHashSet<>(priority);
         for (Enchantment e : Enchantment.values()) {
             NamespacedKey key = e.getKey();
@@ -159,6 +240,41 @@ public final class ExtendedAnvilConfig {
         }
         priority.clear();
         priority.addAll(set);
+    }
+
+    private void ensureAllKnownEnchantsPresent() {
+        // Seed default costs for all known enchants if missing.
+        // These defaults are intentionally low; you can tune in GUI/YAML.
+        for (Enchantment e : Enchantment.values()) {
+            NamespacedKey k = e.getKey();
+            if (k == null) continue;
+            String key = k.toString().toLowerCase();
+            enchantBaseCost.putIfAbsent(key, defaultBaseCostFor(key));
+            enchantPerLevelCost.putIfAbsent(key, defaultPerLevelCostFor(key));
+        }
+    }
+
+    private int defaultBaseCostFor(String key) {
+        // Sensible "vanilla-ish" starting points, not perfect parity.
+        if (key == null) return 0;
+        if (key.endsWith("mending")) return 2;
+        if (key.endsWith("unbreaking")) return 2;
+        if (key.endsWith("efficiency")) return 2;
+        if (key.endsWith("sharpness") || key.endsWith("protection")) return 2;
+        if (key.endsWith("fortune") || key.endsWith("looting")) return 3;
+        if (key.endsWith("silk_touch")) return 3;
+        if (key.endsWith("thorns")) return 4;
+        if (key.endsWith("swift_sneak")) return 4;
+        return 1;
+    }
+
+    private int defaultPerLevelCostFor(String key) {
+        if (key == null) return 0;
+        if (key.endsWith("mending") || key.endsWith("silk_touch")) return 0;
+        if (key.endsWith("fortune") || key.endsWith("looting")) return 2;
+        if (key.endsWith("efficiency") || key.endsWith("sharpness") || key.endsWith("protection")) return 1;
+        if (key.endsWith("unbreaking")) return 1;
+        return 1;
     }
 
     private static int clampInt(int v, int min, int max) {
