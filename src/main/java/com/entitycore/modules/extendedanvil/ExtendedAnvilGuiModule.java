@@ -10,60 +10,70 @@ public final class ExtendedAnvilGuiModule implements Module {
 
     private JavaPlugin plugin;
 
+    private ExtendedAnvilConfig config;
+    private XpRefundService refundService;
+    private EnchantCostService costService;
+
     private ExtendedAnvilSessionManager sessions;
     private ExtendedAnvilListener listener;
 
-    private ExtendedAnvilCommand playerCmd;
-    private ExtendedAnvilAdminCommand adminCmd;
-
-    // Optional: allow your EntityCore.java to still do new ExtendedAnvilGuiModule(this)
-    public ExtendedAnvilGuiModule() {}
-
-    public ExtendedAnvilGuiModule(JavaPlugin plugin) {
-        this.plugin = plugin;
-    }
+    private ExtendedAnvilCommand playerCommand;
+    private ExtendedAnvilAdminCommand adminCommand;
 
     @Override
     public String getName() {
-        return "ExtendedAnvilGUI";
+        return "ExtendedAnvil";
     }
 
     @Override
     public void enable(JavaPlugin plugin) {
-        if (this.plugin == null) this.plugin = plugin;
+        this.plugin = plugin;
 
-        ExtendedAnvilConfig config = new ExtendedAnvilConfig(this.plugin);
-        EnchantCostService costService = new EnchantCostService();
-        XpRefundService refundService = new XpRefundService(config);
+        this.config = new ExtendedAnvilConfig(plugin);
+        this.refundService = new XpRefundService(config);
+        this.costService = new EnchantCostService(config);
 
-        // IMPORTANT: constructor order matches the SessionManager constructor below
-        this.sessions = new ExtendedAnvilSessionManager(this.plugin, config, refundService, costService);
-
+        this.sessions = new ExtendedAnvilSessionManager(plugin, config, costService, refundService);
         this.listener = new ExtendedAnvilListener(sessions);
-        Bukkit.getPluginManager().registerEvents(listener, this.plugin);
 
-        this.playerCmd = new ExtendedAnvilCommand(sessions);
-        this.adminCmd = new ExtendedAnvilAdminCommand(sessions);
+        Bukkit.getPluginManager().registerEvents(listener, plugin);
 
-        PluginCommand ea = this.plugin.getCommand("ea");
-        if (ea != null) ea.setExecutor(playerCmd);
-        else this.plugin.getLogger().warning("Command 'ea' missing from plugin.yml");
+        this.playerCommand = new ExtendedAnvilCommand(sessions);
+        PluginCommand ea = plugin.getCommand("ea");
+        if (ea != null) {
+            ea.setExecutor(playerCommand);
+            ea.setTabCompleter(playerCommand);
+        } else {
+            plugin.getLogger().warning("[ExtendedAnvil] Command 'ea' missing in plugin.yml");
+        }
 
-        PluginCommand eaAdmin = this.plugin.getCommand("eaadmin");
-        if (eaAdmin != null) eaAdmin.setExecutor(adminCmd);
-        else this.plugin.getLogger().warning("Command 'eaadmin' missing from plugin.yml");
+        this.adminCommand = new ExtendedAnvilAdminCommand(sessions);
+        PluginCommand eaAdmin = plugin.getCommand("eaadmin");
+        if (eaAdmin != null) {
+            eaAdmin.setExecutor(adminCommand);
+            eaAdmin.setTabCompleter(adminCommand);
+        } else {
+            plugin.getLogger().warning("[ExtendedAnvil] Command 'eaadmin' missing in plugin.yml");
+        }
 
-        this.plugin.getLogger().info("[ExtendedAnvil] Enabled (Chest GUI).");
+        plugin.getLogger().info("[ExtendedAnvil] Enabled.");
     }
 
     @Override
     public void disable() {
+        if (sessions != null) {
+            sessions.shutdownAll();
+        }
+
         if (listener != null) HandlerList.unregisterAll(listener);
 
+        plugin = null;
+        config = null;
+        refundService = null;
+        costService = null;
         sessions = null;
         listener = null;
-        playerCmd = null;
-        adminCmd = null;
-        plugin = null;
+        playerCommand = null;
+        adminCommand = null;
     }
 }
