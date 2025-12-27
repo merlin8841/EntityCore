@@ -1,47 +1,32 @@
 package com.entitycore.modules.extendedanvil;
 
-import com.entitycore.module.Module;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
 
-public final class ExtendedAnvilModule implements Module {
+public final class ExtendedAnvilGuiModule {
 
-    private ExtendedAnvilSessionManager sessions;
+    private final JavaPlugin plugin;
 
-    @Override
-    public String getName() {
-        return "ExtendedAnvil";
+    public ExtendedAnvilGuiModule(JavaPlugin plugin) {
+        this.plugin = plugin;
     }
 
-    @Override
-    public void enable(JavaPlugin plugin) {
+    public void enable() {
         ExtendedAnvilConfig config = new ExtendedAnvilConfig(plugin);
-        EnchantCostService costService = new EnchantCostService(config);
-        XpRefundService refundService = new XpRefundService(plugin);
+        EnchantCostService costService = new EnchantCostService();
+        XpRefundService refundService = new XpRefundService(config);
 
-        this.sessions = new ExtendedAnvilSessionManager(
-                plugin,
-                config,
-                costService,
-                refundService
-        );
+        ExtendedAnvilSessionManager sessions =
+                new ExtendedAnvilSessionManager(plugin, config, costService, refundService);
 
         Bukkit.getPluginManager().registerEvents(
-                new ExtendedAnvilListener(sessions),
-                plugin
+                new ExtendedAnvilListener(sessions), plugin
         );
 
-        plugin.getCommand("ea").setExecutor(
-                new ExtendedAnvilCommand(sessions)
-        );
+        ExtendedAnvilCommand playerCmd = new ExtendedAnvilCommand(sessions);
+        ExtendedAnvilAdminCommand adminCmd = new ExtendedAnvilAdminCommand(sessions);
 
-        plugin.getLogger().info("[ExtendedAnvil] Chest-based anvil enabled.");
-    }
-
-    @Override
-    public void disable() {
-        if (sessions != null) {
-            sessions.shutdown();
-        }
+        plugin.getCommand("ea").setExecutor(playerCmd);
+        plugin.getCommand("eaadmin").setExecutor(adminCmd);
     }
 }
