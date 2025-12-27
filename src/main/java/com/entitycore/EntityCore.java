@@ -1,8 +1,8 @@
 package com.entitycore;
 
 import com.entitycore.module.ModuleManager;
-import com.entitycore.modules.anvil.ExtendedAnvilModule;
 import com.entitycore.modules.hoppers.HopperFiltersModule;
+import com.entitycore.modules.extendedanvil.ExtendedAnvilGuiModule;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class EntityCore extends JavaPlugin {
@@ -15,9 +15,9 @@ public final class EntityCore extends JavaPlugin {
 
         // Register modules here (manual registration by design)
         moduleManager.register(new HopperFiltersModule());
-        moduleManager.register(new ExtendedAnvilModule());
+        moduleManager.register(new ExtendedAnvilGuiModule());
 
-        // Enable all registered modules
+        // Actually enables every registered module
         moduleManager.loadModules();
     }
 
