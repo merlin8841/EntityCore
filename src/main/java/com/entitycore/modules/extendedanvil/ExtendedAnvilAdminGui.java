@@ -14,11 +14,11 @@ public final class ExtendedAnvilAdminGui {
 
     public static final int SIZE = 54;
 
-    // Refund row
-    public static final int SLOT_REFUND_FIRST_VALUE = 10;
-    public static final int SLOT_REFUND_SECOND_VALUE = 11;
-    public static final int SLOT_REFUND_LATER_VALUE = 12;
-    public static final int SLOT_REFUND_FALLBACK_VALUE = 14;
+    // Refund values (must not be in top row because delta buttons use +/-9 and +/-18)
+    public static final int SLOT_REFUND_FIRST_VALUE = 20;
+    public static final int SLOT_REFUND_SECOND_VALUE = 21;
+    public static final int SLOT_REFUND_LATER_VALUE = 22;
+    public static final int SLOT_REFUND_FALLBACK_VALUE = 24;
 
     // Apply/cost row
     public static final int SLOT_GLOBAL_BASE_VALUE = 28;
@@ -67,7 +67,11 @@ public final class ExtendedAnvilAdminGui {
         inv.setItem(19, ExtendedAnvilUtil.info(Material.ANVIL, "Apply Cost Adders", List.of("Global adders (optional)")));
 
         // Static buttons
-        inv.setItem(SLOT_CURSE_TOGGLE, ExtendedAnvilUtil.button(Material.GRAY_DYE, "Allow curse removal", List.of("Tap to toggle")));
+        inv.setItem(SLOT_CURSE_TOGGLE, ExtendedAnvilUtil.button(
+                config.isAllowCurseRemoval() ? Material.LIME_DYE : Material.GRAY_DYE,
+                "Allow curse removal",
+                List.of("Tap to toggle")
+        ));
 
         inv.setItem(SLOT_EDIT_PRIORITY, ExtendedAnvilUtil.button(Material.WRITABLE_BOOK, "Edit priority list", List.of(
                 "Controls disenchant order",
@@ -88,20 +92,31 @@ public final class ExtendedAnvilAdminGui {
 
     public void refresh(Inventory inv) {
         // Values
-        inv.setItem(SLOT_REFUND_FIRST_VALUE, ExtendedAnvilUtil.info(Material.EXPERIENCE_BOTTLE, "First: " + config.getRefundPercentFirst() + "%", List.of("")));
-        inv.setItem(SLOT_REFUND_SECOND_VALUE, ExtendedAnvilUtil.info(Material.EXPERIENCE_BOTTLE, "Second: " + config.getRefundPercentSecond() + "%", List.of("")));
-        inv.setItem(SLOT_REFUND_LATER_VALUE, ExtendedAnvilUtil.info(Material.EXPERIENCE_BOTTLE, "Later: " + config.getRefundPercentLater() + "%", List.of("")));
-        inv.setItem(SLOT_REFUND_FALLBACK_VALUE, ExtendedAnvilUtil.info(Material.COMPARATOR, "Fallback: " + config.getRefundLevelsPerEnchantLevel(), List.of("Levels per enchant level")));
+        inv.setItem(SLOT_REFUND_FIRST_VALUE, ExtendedAnvilUtil.value(Material.EXPERIENCE_BOTTLE,
+                "First: " + config.getRefundPercentFirst() + "%", List.of("")));
+        inv.setItem(SLOT_REFUND_SECOND_VALUE, ExtendedAnvilUtil.value(Material.EXPERIENCE_BOTTLE,
+                "Second: " + config.getRefundPercentSecond() + "%", List.of("")));
+        inv.setItem(SLOT_REFUND_LATER_VALUE, ExtendedAnvilUtil.value(Material.EXPERIENCE_BOTTLE,
+                "Later: " + config.getRefundPercentLater() + "%", List.of("")));
+        inv.setItem(SLOT_REFUND_FALLBACK_VALUE, ExtendedAnvilUtil.value(Material.EXPERIENCE_BOTTLE,
+                "Fallback: " + config.getRefundFallbackLevelsPerEnchantLevel(), List.of("Levels per enchant level")));
 
-        inv.setItem(SLOT_GLOBAL_BASE_VALUE, ExtendedAnvilUtil.info(Material.ANVIL, "Global base: " + config.getApplyCostGlobalBaseLevels(), List.of("Added once per apply")));
-        inv.setItem(SLOT_ADD_PER_ENCHANT_VALUE, ExtendedAnvilUtil.info(Material.CANDLE, "+/enchant: " + config.getApplyCostPerEnchantAdd(), List.of("Added per enchant applied")));
-        inv.setItem(SLOT_ADD_PER_STORED_LEVEL_VALUE, ExtendedAnvilUtil.info(Material.CANDLE, "+/lvl: " + config.getApplyCostPerStoredLevelAdd(), List.of("Added per enchant level")));
-        inv.setItem(SLOT_PRIOR_WORK_COST_VALUE, ExtendedAnvilUtil.info(Material.IRON_PICKAXE, "Work cost: " + config.getPriorWorkCostPerStep(), List.of("Levels per prior-work step")));
-        inv.setItem(SLOT_PRIOR_WORK_INC_VALUE, ExtendedAnvilUtil.info(Material.IRON_NUGGET, "Work +: " + config.getPriorWorkIncrementPerApply(), List.of("Steps added per apply")));
+        inv.setItem(SLOT_GLOBAL_BASE_VALUE, ExtendedAnvilUtil.value(Material.ANVIL,
+                "Global base: " + config.getApplyCostGlobalBase(), List.of("")));
+        inv.setItem(SLOT_ADD_PER_ENCHANT_VALUE, ExtendedAnvilUtil.value(Material.ANVIL,
+                "+ per enchant: " + config.getApplyCostPerEnchantAdd(), List.of("")));
+        inv.setItem(SLOT_ADD_PER_STORED_LEVEL_VALUE, ExtendedAnvilUtil.value(Material.ANVIL,
+                "+ per stored lvl: " + config.getApplyCostPerStoredLevelAdd(), List.of("")));
+        inv.setItem(SLOT_PRIOR_WORK_COST_VALUE, ExtendedAnvilUtil.value(Material.ANVIL,
+                "Prior work cost: " + config.getPriorWorkCostPerStep(), List.of("")));
+        inv.setItem(SLOT_PRIOR_WORK_INC_VALUE, ExtendedAnvilUtil.value(Material.ANVIL,
+                "Prior work inc: " + config.getPriorWorkIncrementPerApply(), List.of("")));
 
-        inv.setItem(SLOT_CURSE_TOGGLE,
-                ExtendedAnvilUtil.button(config.isAllowCurseRemoval() ? Material.LIME_DYE : Material.GRAY_DYE,
-                        "Allow curse removal: " + (config.isAllowCurseRemoval() ? "ON" : "OFF"), List.of("Tap to toggle")));
+        inv.setItem(SLOT_CURSE_TOGGLE, ExtendedAnvilUtil.button(
+                config.isAllowCurseRemoval() ? Material.LIME_DYE : Material.GRAY_DYE,
+                "Allow curse removal: " + (config.isAllowCurseRemoval() ? "ON" : "OFF"),
+                List.of("Tap to toggle")
+        ));
 
         // +/- buttons
         placeDeltaButtons(inv, SLOT_REFUND_FIRST_VALUE);
