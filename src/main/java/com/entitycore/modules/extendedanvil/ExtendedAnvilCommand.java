@@ -1,11 +1,12 @@
 package com.entitycore.modules.extendedanvil;
 
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
-import org.bukkit.command.CommandSender;
+import org.bukkit.command.*;
 import org.bukkit.entity.Player;
 
-public final class ExtendedAnvilCommand implements CommandExecutor {
+import java.util.Collections;
+import java.util.List;
+
+public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter {
 
     private final ExtendedAnvilSessionManager sessions;
 
@@ -14,15 +15,17 @@ public final class ExtendedAnvilCommand implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player player)) return true;
-
-        if (!player.hasPermission("entitycore.extendedanvil.use")) {
-            player.sendMessage("§cNo permission.");
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player p)) {
+            sender.sendMessage("Players only.");
             return true;
         }
-
-        sessions.openPlayerMenu(player);
+        sessions.commandOpenPlayer(p);
         return true;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        return Collections.emptyList();
     }
 }
