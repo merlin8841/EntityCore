@@ -5,6 +5,7 @@ import org.bukkit.Material;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryType;
+import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.ItemStack;
@@ -16,6 +17,8 @@ import java.util.*;
 
 public final class PlayerMenu {
 
+    // Bedrock (Geyser) may ignore custom titles for anvil windows and always show "Anvil".
+    // We DO NOT rely on title for identification anymore.
     public static final String TITLE = "Extended Anvil";
 
     // Real anvil inventory slots
@@ -26,13 +29,13 @@ public final class PlayerMenu {
     public enum Mode { NONE, DISENCHANT, APPLY }
 
     public static Inventory create(Player player) {
-        // Real anvil UI
+        // Still set a title for Java clients; Bedrock may ignore it.
         return Bukkit.createInventory(player, InventoryType.ANVIL, TITLE);
     }
 
     public static boolean isThis(InventoryView view) {
+        // IMPORTANT: do not check title (Bedrock forces "Anvil")
         return view != null
-                && TITLE.equals(view.getTitle())
                 && view.getTopInventory() != null
                 && view.getTopInventory().getType() == InventoryType.ANVIL;
     }
@@ -62,6 +65,11 @@ public final class PlayerMenu {
 
         if (inv == null || inv.getType() != InventoryType.ANVIL) return;
 
+        // CRITICAL: remove vanilla 39-level clamp inside THIS GUI so Bedrock doesn't show "Too Expensive!"
+        if (inv instanceof AnvilInventory anvilInv) {
+            anvilInv.setMaximumRepairCost(999999); // effectively unlimited
+        }
+
         ItemStack item = inv.getItem(SLOT_ITEM);
         ItemStack right = inv.getItem(SLOT_BOOK);
 
@@ -69,22 +77,33 @@ public final class PlayerMenu {
         inv.setItem(SLOT_OUTPUT, null);
 
         Mode mode = inferMode(inv);
-        if (mode == Mode.NONE) return;
+        if (mode == Mode.NONE) {
+            if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
+            return;
+        }
 
-        if (item == null || item.getType() == Material.AIR) return;
+        if (item == null || item.getType() == Material.AIR) {
+            if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
+            return;
+        }
 
         // no book-on-book behavior
         if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
             inv.setItem(SLOT_OUTPUT, errorItem("Can't use books as item"));
+            if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
             return;
         }
 
         if (mode == Mode.DISENCHANT) {
-            if (right == null || right.getType() != Material.BOOK || right.getAmount() <= 0) return;
+            if (right == null || right.getType() != Material.BOOK || right.getAmount() <= 0) {
+                if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
+                return;
+            }
 
             Map<Enchantment, Integer> ench = item.getEnchantments();
             if (ench == null || ench.isEmpty()) {
                 inv.setItem(SLOT_OUTPUT, errorItem("No enchantments"));
+                if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
                 return;
             }
 
@@ -97,6 +116,7 @@ public final class PlayerMenu {
                 Enchantment chosen = cfg.chooseNextDisenchant(ench.keySet());
                 if (chosen == null) {
                     inv.setItem(SLOT_OUTPUT, errorItem("No target enchant"));
+                    if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
                     return;
                 }
                 toRemove = new LinkedHashMap<>();
@@ -118,19 +138,27 @@ public final class PlayerMenu {
             }
 
             inv.setItem(SLOT_OUTPUT, outBook);
+
+            // Show some cost line instead of "Too Expensive!" on Bedrock
+            if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(1);
             return;
         }
 
         // APPLY (vanilla-exact scaling via your service)
         if (mode == Mode.APPLY) {
-            if (right == null || right.getType() != Material.ENCHANTED_BOOK) return;
+            if (right == null || right.getType() != Material.ENCHANTED_BOOK) {
+                if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
+                return;
+            }
 
             EnchantCostService.ApplyPreview preview = costService.previewApply(viewer, item, right);
             if (!preview.canApply || preview.result == null || preview.result.getType() == Material.AIR) {
                 inv.setItem(SLOT_OUTPUT, errorItem("Nothing to apply"));
+                if (inv instanceof AnvilInventory anvilInv) anvilInv.setRepairCost(0);
                 return;
             }
 
+            // Put result in slot 2 (client will now allow taking it because max repair cost is huge)
             ItemStack out = preview.result.clone();
             ItemMeta meta = out.getItemMeta();
             if (meta != null) {
@@ -142,8 +170,12 @@ public final class PlayerMenu {
                 ));
                 out.setItemMeta(meta);
             }
-
             inv.setItem(SLOT_OUTPUT, out);
+
+            // Make Bedrock show "Enchantment Cost: X" instead of "Too Expensive!"
+            if (inv instanceof AnvilInventory anvilInv) {
+                anvilInv.setRepairCost(Math.max(1, preview.levelCost));
+            }
         }
     }
 
