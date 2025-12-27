@@ -14,22 +14,9 @@ public final class ExtendedAnvilAdminCommand implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        if (!(sender instanceof Player player)) {
-            sender.sendMessage("Players only.");
-            return true;
-        }
-
-        if (!player.hasPermission("entitycore.extendedanvil.admin")) {
-            player.sendMessage("§cYou do not have permission to use this.");
-            return true;
-        }
-
-        // IMPORTANT:
-        // AdminMenu is static / singleton by design.
-        // Do NOT instantiate it.
-        AdminMenu.open(player);
-
+    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        if (!(sender instanceof Player player)) return true;
+        sessions.openAdminMenu(player);
         return true;
     }
 }
