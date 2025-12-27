@@ -37,6 +37,11 @@ public final class ExtendedAnvilModule implements Module {
         plugin.getConfig().addDefault("extendedanvil.refund.base-levels-per-enchant", 2.0);
         plugin.getConfig().addDefault("extendedanvil.refund.level-multiplier", 1.0);
 
+        // Caps map lives at: extendedanvil.caps.<enchantKey>: <int>
+        // Priority list lives at: extendedanvil.disenchant.priority: [ "minecraft:mending", ... ]
+        plugin.getConfig().addDefault("extendedanvil.caps", null);
+        plugin.getConfig().addDefault("extendedanvil.disenchant.priority", null);
+
         plugin.getConfig().options().copyDefaults(true);
         plugin.saveConfig();
 
@@ -47,10 +52,9 @@ public final class ExtendedAnvilModule implements Module {
 
         this.refundService = new XpRefundService(plugin);
         this.listener = new ExtendedAnvilListener(plugin, refundService);
-
         Bukkit.getPluginManager().registerEvents(listener, plugin);
 
-        // Admin GUI wiring (OP-only)
+        // Admin GUI wiring
         this.adminMenu = new ExtendedAnvilAdminMenu(plugin);
         this.adminCommand = new ExtendedAnvilAdminCommand(adminMenu);
         this.adminListener = new ExtendedAnvilAdminListener(plugin, adminMenu);
@@ -70,12 +74,8 @@ public final class ExtendedAnvilModule implements Module {
 
     @Override
     public void disable() {
-        if (listener != null) {
-            HandlerList.unregisterAll(listener);
-        }
-        if (adminListener != null) {
-            HandlerList.unregisterAll(adminListener);
-        }
+        if (listener != null) HandlerList.unregisterAll(listener);
+        if (adminListener != null) HandlerList.unregisterAll(adminListener);
 
         refundService = null;
         listener = null;
