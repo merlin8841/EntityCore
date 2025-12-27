@@ -1,5 +1,6 @@
 package com.entitycore.modules.extendedanvil;
 
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
@@ -16,7 +17,6 @@ import java.util.*;
 
 public final class ExtendedAnvilService {
 
-    @SuppressWarnings("unused")
     private final Plugin plugin;
     private final ExtendedAnvilConfig config;
 
@@ -45,8 +45,8 @@ public final class ExtendedAnvilService {
             return ApplyResult.fail(ChatColor.RED + "That book has no stored enchants.");
         }
 
-        // If target is a book, we allow combine (for multi-enchant books),
-        // but we DO NOT allow any level upgrades (no combining to gain higher levels).
+        // If target is an enchanted book, we allow combining into a multi-enchant book,
+        // BUT we do NOT allow any level upgrades beyond max(existing, incoming).
         if (targetItem.getType() == Material.ENCHANTED_BOOK) {
             return combineBooks(player, targetItem, enchantedBook);
         }
@@ -63,7 +63,8 @@ public final class ExtendedAnvilService {
      * Applies enchants from an enchanted book onto a non-book item.
      * - respects vanilla conflicts
      * - upgrades lower levels only
-     * - COST SCALES IN LEVELS based on what would actually apply
+     * - COST SCALES using per-enchant base/per-level cost + optional global adders + prior-work
+     * - STORES per-enchant cost metadata onto the item (PDC) for consistent future refunds
      */
     private ApplyResult applyBookToItem(Player player, ItemStack item, ItemStack enchantedBook) {
         if (!(enchantedBook.getItemMeta() instanceof EnchantmentStorageMeta esm)) {
@@ -74,13 +75,13 @@ public final class ExtendedAnvilService {
         if (itemMeta == null) return ApplyResult.fail(ChatColor.RED + "That item can't be modified.");
 
         Map<Enchantment, Integer> stored = esm.getStoredEnchants();
+        if (stored.isEmpty()) return ApplyResult.fail(ChatColor.RED + "That book has no stored enchants.");
 
         // Determine which enchants would actually apply (must be higher than existing)
         List<Map.Entry<Enchantment, Integer>> applicable = new ArrayList<>();
         for (Map.Entry<Enchantment, Integer> entry : stored.entrySet()) {
             Enchantment ench = entry.getKey();
-            Integer lvlObj = entry.getValue();
-            int newLevel = (lvlObj == null) ? 0 : lvlObj;
+            int newLevel = entry.getValue() == null ? 0 : entry.getValue();
             if (ench == null || newLevel <= 0) continue;
 
             if (!ench.canEnchantItem(item)) {
@@ -109,11 +110,15 @@ public final class ExtendedAnvilService {
             }
         }
 
-        int costLevels = computeCostLevels(applicable.size(), sumLevels(applicable));
+        // Compute cost using per-enchant costs (from book metadata if present, else config), plus global adders and prior work.
+        CostBreakdown breakdown = computeApplyCostForItem(itemMeta, esm, applicable);
+        int costLevels = breakdown.totalLevels;
+
         if (costLevels > 0 && player.getLevel() < costLevels) {
             return ApplyResult.fail(ChatColor.RED + "You need " + costLevels + " levels to apply that book.");
         }
 
+        // Apply enchants
         boolean changed = false;
         for (Map.Entry<Enchantment, Integer> entry : applicable) {
             Enchantment ench = entry.getKey();
@@ -122,10 +127,12 @@ public final class ExtendedAnvilService {
             itemMeta.addEnchant(ench, newLevel, false);
             changed = true;
         }
-
         if (!changed) {
             return ApplyResult.fail(ChatColor.RED + "Nothing to apply.");
         }
+
+        // Update prior-work + store per-enchant cost metadata onto the item so refunds remain consistent.
+        stampItemCostsAndPriorWork(itemMeta, esm, applicable);
 
         item.setItemMeta(itemMeta);
 
@@ -138,10 +145,11 @@ public final class ExtendedAnvilService {
 
     /**
      * Combine enchanted book onto enchanted book:
-     * - merges enchants to make multi-enchant books easier
+     * - merges enchants into a multi-enchant book
      * - DOES NOT upgrade levels: result level = max(levelA, levelB)
-     * - rejects conflicts (keeps sane books)
-     * - cost scales with the resulting book (not flat)
+     * - rejects conflicts within the merged book
+     * - preserves per-enchant cost metadata (PDC) so reapply scaling stays correct
+     * - uses cost = sum(per-enchant costs) + optional global adders (no prior-work)
      */
     private ApplyResult combineBooks(Player player, ItemStack targetBook, ItemStack addBook) {
         if (!(targetBook.getItemMeta() instanceof EnchantmentStorageMeta tMeta)) {
@@ -154,10 +162,10 @@ public final class ExtendedAnvilService {
         Map<Enchantment, Integer> t = new HashMap<>(tMeta.getStoredEnchants());
         Map<Enchantment, Integer> a = new HashMap<>(aMeta.getStoredEnchants());
 
-        if (a.isEmpty()) return ApplyResult.fail(ChatColor.RED + "That book has no stored enchants.");
         if (t.isEmpty()) return ApplyResult.fail(ChatColor.RED + "Target book has no stored enchants.");
+        if (a.isEmpty()) return ApplyResult.fail(ChatColor.RED + "That book has no stored enchants.");
 
-        // Build merged map where levels never increase beyond max of inputs
+        // Build merged levels (max per enchant)
         Map<Enchantment, Integer> merged = new HashMap<>(t);
         for (Map.Entry<Enchantment, Integer> entry : a.entrySet()) {
             Enchantment ench = entry.getKey();
@@ -168,7 +176,7 @@ public final class ExtendedAnvilService {
             merged.put(ench, Math.max(cur, lvl));
         }
 
-        // Reject conflicts inside merged set (to avoid insane books)
+        // Reject conflicts inside merged set (avoid insane books)
         List<Enchantment> keys = new ArrayList<>(merged.keySet());
         for (int i = 0; i < keys.size(); i++) {
             for (int j = i + 1; j < keys.size(); j++) {
@@ -181,30 +189,33 @@ public final class ExtendedAnvilService {
             }
         }
 
-        // If nothing changed, don't charge
+        // Determine if anything actually changes
         boolean changed = !sameStoredEnchants(tMeta.getStoredEnchants(), merged);
         if (!changed) {
-            return ApplyResult.fail(ChatColor.RED + "Nothing new to combine (no higher levels or new enchants).");
+            return ApplyResult.fail(ChatColor.RED + "Nothing new to combine (no new enchants or higher levels).");
         }
 
-        int costLevels = computeCostLevels(merged.size(), sumLevels(merged));
+        // Compute cost based on per-enchant costs (preserve metadata when possible)
+        int costLevels = computeCombineCostLevels(tMeta, aMeta, merged);
         if (costLevels > 0 && player.getLevel() < costLevels) {
             return ApplyResult.fail(ChatColor.RED + "You need " + costLevels + " levels to combine those books.");
         }
 
-        // Write merged enchants back (clear then set)
+        // Write merged enchants back
         EnchantmentStorageMeta out = (EnchantmentStorageMeta) targetBook.getItemMeta();
         if (out == null) return ApplyResult.fail(ChatColor.RED + "Failed to edit target book.");
 
-        // Remove existing stored enchants
+        // Clear stored enchants
         for (Enchantment e : new HashSet<>(out.getStoredEnchants().keySet())) {
             out.removeStoredEnchant(e);
         }
-
         // Add merged enchants
         for (Map.Entry<Enchantment, Integer> entry : merged.entrySet()) {
             out.addStoredEnchant(entry.getKey(), entry.getValue(), false);
         }
+
+        // Merge cost metadata onto output book (PDC on the book meta)
+        mergeBookCostMetadata(out, tMeta, aMeta, merged);
 
         targetBook.setItemMeta(out);
 
@@ -217,7 +228,11 @@ public final class ExtendedAnvilService {
 
     /**
      * Disenchants an item into one enchanted book.
-     * Refund is returned in LEVELS (giveExpLevels), with diminishing returns tracked per-enchant via PDC.
+     * - removeAll=true => all removable enchants moved to ONE book
+     * - removeAll=false => one enchant removed per click by priority
+     *
+     * Refund is returned in LEVELS (giveExpLevels), applied on a 1-tick delay for Bedrock/Geyser safety.
+     * Refund is computed from per-enchant cost metadata stored on the item if present, else from config.
      */
     public DisenchantResult disenchant(Player player, ItemStack item, boolean removeAll) {
         if (item == null || item.getType().isAir()) {
@@ -267,37 +282,251 @@ public final class ExtendedAnvilService {
             int lvl = meta.getEnchantLevel(e);
             if (lvl <= 0) continue;
 
+            // Move enchant to book
             bm.addStoredEnchant(e, lvl, false);
+
+            String ek = ExtendedAnvilUtil.enchantKey(e);
+
+            // Determine intrinsic cost for this enchant (prefer stored on item, else compute from config)
+            int intrinsicCost = readStoredCost(pdc, ek);
+            if (intrinsicCost <= 0) {
+                intrinsicCost = computeIntrinsicCostFromConfig(ek, lvl);
+            }
+
+            // Stamp that cost onto the output book (so reapply scales properly)
+            PersistentDataContainer bookPdc = bm.getPersistentDataContainer();
+            writeStoredCost(bookPdc, ek, intrinsicCost);
+
+            // Remove enchant from item
             meta.removeEnchant(e);
 
-            String key = ExtendedAnvilUtil.enchantKey(e);
-            NamespacedKey countKey = config.keyForRemovalCount(key);
+            // Remove stored cost metadata from item (optional but keeps it tidy)
+            removeStoredCost(pdc, ek);
+
+            // Update removal count for diminishing returns
+            NamespacedKey countKey = config.keyForRemovalCount(ek);
             Integer count = pdc.get(countKey, PersistentDataType.INTEGER);
             int newCount = (count == null ? 0 : count) + 1;
             pdc.set(countKey, PersistentDataType.INTEGER, newCount);
 
-            refundLevels += computeRefundLevelsFor(lvl, newCount);
+            int pct;
+            if (newCount <= 1) pct = config.getRefundPercentFirst();
+            else if (newCount == 2) pct = config.getRefundPercentSecond();
+            else pct = config.getRefundPercentLater();
+
+            refundLevels += (intrinsicCost * pct) / 100;
         }
 
         outBook.setItemMeta(bm);
         item.setItemMeta(meta);
 
+        // Apply refund as LEVELS on a 1-tick delay (Bedrock-friendly)
         if (refundLevels > 0) {
-            player.giveExpLevels(refundLevels);
+            int give = refundLevels;
+            Bukkit.getScheduler().runTask(plugin, () -> player.giveExpLevels(give));
         }
 
         return DisenchantResult.ok(outBook, refundLevels, toRemove.size());
     }
 
-    private int computeRefundLevelsFor(int enchantLevel, int removalCountAfterIncrement) {
-        int pct;
-        if (removalCountAfterIncrement <= 1) pct = config.getRefundPercentFirst();
-        else if (removalCountAfterIncrement == 2) pct = config.getRefundPercentSecond();
-        else pct = config.getRefundPercentLater();
+    // -------------------------
+    // Cost model helpers
+    // -------------------------
 
-        int baseLevels = config.getRefundLevelsPerEnchantLevel() * Math.max(1, enchantLevel);
-        return (baseLevels * pct) / 100;
+    private static final class CostBreakdown {
+        final int intrinsicSum;
+        final int globalAdders;
+        final int priorWorkAdd;
+        final int totalLevels;
+
+        CostBreakdown(int intrinsicSum, int globalAdders, int priorWorkAdd) {
+            this.intrinsicSum = intrinsicSum;
+            this.globalAdders = globalAdders;
+            this.priorWorkAdd = priorWorkAdd;
+            this.totalLevels = Math.max(0, intrinsicSum + globalAdders + priorWorkAdd);
+        }
     }
+
+    private CostBreakdown computeApplyCostForItem(ItemMeta itemMeta, EnchantmentStorageMeta bookMeta,
+                                                 List<Map.Entry<Enchantment, Integer>> applicable) {
+        int intrinsicSum = 0;
+        int enchCount = 0;
+        int storedLevelSum = 0;
+
+        PersistentDataContainer bookPdc = bookMeta.getPersistentDataContainer();
+
+        for (Map.Entry<Enchantment, Integer> entry : applicable) {
+            Enchantment e = entry.getKey();
+            int lvl = entry.getValue() == null ? 0 : entry.getValue();
+            if (e == null || lvl <= 0) continue;
+
+            enchCount++;
+            storedLevelSum += lvl;
+
+            String ek = ExtendedAnvilUtil.enchantKey(e);
+
+            // Prefer cost metadata stored on the book (prevents weird scaling when combined)
+            int c = readStoredCost(bookPdc, ek);
+            if (c <= 0) {
+                c = computeIntrinsicCostFromConfig(ek, lvl);
+            }
+            intrinsicSum += Math.max(0, c);
+        }
+
+        int global = 0;
+        global += config.getApplyCostGlobalBaseLevels();
+        global += config.getApplyCostPerEnchantAdd() * enchCount;
+        global += config.getApplyCostPerStoredLevelAdd() * storedLevelSum;
+
+        // Prior work penalty stored on item PDC
+        int priorAdd = 0;
+        PersistentDataContainer itemPdc = itemMeta.getPersistentDataContainer();
+        Integer prior = itemPdc.get(ExtendedAnvilKeys.priorWork(plugin), PersistentDataType.INTEGER);
+        int priorWork = prior == null ? 0 : Math.max(0, prior);
+        if (priorWork > 0 && config.getPriorWorkCostPerStep() > 0) {
+            priorAdd = priorWork * config.getPriorWorkCostPerStep();
+        }
+
+        return new CostBreakdown(intrinsicSum, global, priorAdd);
+    }
+
+    private int computeCombineCostLevels(EnchantmentStorageMeta targetMeta, EnchantmentStorageMeta addMeta,
+                                        Map<Enchantment, Integer> merged) {
+        int intrinsicSum = 0;
+        int enchCount = 0;
+        int levelSum = 0;
+
+        PersistentDataContainer tPdc = targetMeta.getPersistentDataContainer();
+        PersistentDataContainer aPdc = addMeta.getPersistentDataContainer();
+
+        for (Map.Entry<Enchantment, Integer> entry : merged.entrySet()) {
+            Enchantment e = entry.getKey();
+            int lvl = entry.getValue() == null ? 0 : entry.getValue();
+            if (e == null || lvl <= 0) continue;
+
+            enchCount++;
+            levelSum += lvl;
+
+            String ek = ExtendedAnvilUtil.enchantKey(e);
+
+            // Prefer metadata from whichever book "provides" that level:
+            // If add book has >= target level, prefer add's stored cost; otherwise target's.
+            int targetLvl = targetMeta.getStoredEnchantLevel(e);
+            int addLvl = addMeta.getStoredEnchantLevel(e);
+
+            int c;
+            if (addLvl >= targetLvl) c = readStoredCost(aPdc, ek);
+            else c = readStoredCost(tPdc, ek);
+
+            if (c <= 0) c = Math.max(readStoredCost(tPdc, ek), readStoredCost(aPdc, ek));
+            if (c <= 0) c = computeIntrinsicCostFromConfig(ek, lvl);
+
+            intrinsicSum += Math.max(0, c);
+        }
+
+        int global = 0;
+        global += config.getApplyCostGlobalBaseLevels();
+        global += config.getApplyCostPerEnchantAdd() * enchCount;
+        global += config.getApplyCostPerStoredLevelAdd() * levelSum;
+
+        return Math.max(0, intrinsicSum + global);
+    }
+
+    private void stampItemCostsAndPriorWork(ItemMeta itemMeta, EnchantmentStorageMeta bookMeta,
+                                           List<Map.Entry<Enchantment, Integer>> applicable) {
+        PersistentDataContainer itemPdc = itemMeta.getPersistentDataContainer();
+        PersistentDataContainer bookPdc = bookMeta.getPersistentDataContainer();
+
+        // Increment prior-work
+        NamespacedKey priorKey = ExtendedAnvilKeys.priorWork(plugin);
+        Integer prior = itemPdc.get(priorKey, PersistentDataType.INTEGER);
+        int cur = prior == null ? 0 : Math.max(0, prior);
+        int next = cur + Math.max(0, config.getPriorWorkIncrementPerApply());
+        itemPdc.set(priorKey, PersistentDataType.INTEGER, next);
+
+        // Store per-enchant cost metadata onto the item
+        for (Map.Entry<Enchantment, Integer> entry : applicable) {
+            Enchantment e = entry.getKey();
+            int lvl = entry.getValue() == null ? 0 : entry.getValue();
+            if (e == null || lvl <= 0) continue;
+
+            String ek = ExtendedAnvilUtil.enchantKey(e);
+
+            int cost = readStoredCost(bookPdc, ek);
+            if (cost <= 0) cost = computeIntrinsicCostFromConfig(ek, lvl);
+
+            writeStoredCost(itemPdc, ek, cost);
+        }
+    }
+
+    private int computeIntrinsicCostFromConfig(String enchantKey, int level) {
+        // base + (perLevel * (level-1))
+        int base = config.getEnchantBaseCost(enchantKey);
+        int per = config.getEnchantPerLevelCost(enchantKey);
+        int lvlAdj = Math.max(0, level - 1);
+        return Math.max(0, base + (per * lvlAdj));
+    }
+
+    private int readStoredCost(PersistentDataContainer pdc, String enchantKey) {
+        if (pdc == null || enchantKey == null) return 0;
+        NamespacedKey k = ExtendedAnvilKeys.bookEnchantCost(plugin, enchantKey);
+        Integer v = pdc.get(k, PersistentDataType.INTEGER);
+        return v == null ? 0 : Math.max(0, v);
+    }
+
+    private void writeStoredCost(PersistentDataContainer pdc, String enchantKey, int cost) {
+        if (pdc == null || enchantKey == null) return;
+        NamespacedKey k = ExtendedAnvilKeys.bookEnchantCost(plugin, enchantKey);
+        pdc.set(k, PersistentDataType.INTEGER, Math.max(0, cost));
+    }
+
+    private void removeStoredCost(PersistentDataContainer pdc, String enchantKey) {
+        if (pdc == null || enchantKey == null) return;
+        NamespacedKey k = ExtendedAnvilKeys.bookEnchantCost(plugin, enchantKey);
+        pdc.remove(k);
+    }
+
+    private void mergeBookCostMetadata(EnchantmentStorageMeta out, EnchantmentStorageMeta targetMeta,
+                                       EnchantmentStorageMeta addMeta, Map<Enchantment, Integer> merged) {
+        PersistentDataContainer outPdc = out.getPersistentDataContainer();
+        PersistentDataContainer tPdc = targetMeta.getPersistentDataContainer();
+        PersistentDataContainer aPdc = addMeta.getPersistentDataContainer();
+
+        // Remove any old costs not in merged
+        Set<String> mergedKeys = new HashSet<>();
+        for (Enchantment e : merged.keySet()) {
+            mergedKeys.add(ExtendedAnvilUtil.enchantKey(e));
+        }
+
+        // For each merged enchant, select the cost metadata from the source that provides the kept level.
+        for (Map.Entry<Enchantment, Integer> entry : merged.entrySet()) {
+            Enchantment e = entry.getKey();
+            int lvl = entry.getValue() == null ? 0 : entry.getValue();
+            if (e == null || lvl <= 0) continue;
+
+            String ek = ExtendedAnvilUtil.enchantKey(e);
+
+            int targetLvl = targetMeta.getStoredEnchantLevel(e);
+            int addLvl = addMeta.getStoredEnchantLevel(e);
+
+            int c;
+            if (addLvl >= targetLvl) c = readStoredCost(aPdc, ek);
+            else c = readStoredCost(tPdc, ek);
+
+            if (c <= 0) c = Math.max(readStoredCost(tPdc, ek), readStoredCost(aPdc, ek));
+            if (c <= 0) c = computeIntrinsicCostFromConfig(ek, lvl);
+
+            writeStoredCost(outPdc, ek, c);
+        }
+
+        // Best-effort cleanup: remove costs for enchants no longer stored
+        // (We can't iterate all PDC keys safely here; leaving extras is harmless.)
+        // So we simply do nothing beyond writing merged ones.
+    }
+
+    // -------------------------
+    // Priority helpers
+    // -------------------------
 
     private boolean isEligibleForRemoval(Enchantment e) {
         if (e == null) return false;
@@ -323,32 +552,6 @@ public final class ExtendedAnvilService {
         return out;
     }
 
-    private int computeCostLevels(int enchantCount, int sumStoredLevels) {
-        return Math.max(0,
-                config.getApplyCostBaseLevels()
-                        + (config.getApplyCostPerEnchant() * Math.max(0, enchantCount))
-                        + (config.getApplyCostPerStoredLevel() * Math.max(0, sumStoredLevels))
-        );
-    }
-
-    private int sumLevels(List<Map.Entry<Enchantment, Integer>> list) {
-        int s = 0;
-        for (Map.Entry<Enchantment, Integer> e : list) {
-            if (e == null || e.getValue() == null) continue;
-            s += Math.max(0, e.getValue());
-        }
-        return s;
-    }
-
-    private int sumLevels(Map<Enchantment, Integer> map) {
-        int s = 0;
-        for (Integer v : map.values()) {
-            if (v == null) continue;
-            s += Math.max(0, v);
-        }
-        return s;
-    }
-
     private boolean sameStoredEnchants(Map<Enchantment, Integer> a, Map<Enchantment, Integer> b) {
         if (a.size() != b.size()) return false;
         for (Map.Entry<Enchantment, Integer> e : a.entrySet()) {
@@ -358,6 +561,10 @@ public final class ExtendedAnvilService {
         }
         return true;
     }
+
+    // -------------------------
+    // Results
+    // -------------------------
 
     public record DisenchantResult(boolean ok, ItemStack book, int refundLevels, int removedCount, String message) {
         static DisenchantResult ok(ItemStack book, int refundLevels, int removedCount) {
