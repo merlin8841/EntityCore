@@ -5,6 +5,7 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.*;
+import org.bukkit.event.player.PlayerQuitEvent;
 
 public final class ExtendedAnvilListener implements Listener {
 
@@ -14,27 +15,34 @@ public final class ExtendedAnvilListener implements Listener {
         this.sessions = sessions;
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onClick(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        sessions.handleClick(player, event);
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onPrepare(PrepareAnvilEvent event) {
+        sessions.handlePrepare(event);
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
+    public void onClick(InventoryClickEvent event) {
+        if (event.getWhoClicked() instanceof Player player) {
+            sessions.handleClick(player, event);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     public void onDrag(InventoryDragEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-        sessions.handleDrag(player, event);
+        if (event.getWhoClicked() instanceof Player player) {
+            sessions.handleDrag(player, event);
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onClose(InventoryCloseEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) return;
-        sessions.handleClose(player, event);
+        if (event.getPlayer() instanceof Player player) {
+            sessions.handleClose(player);
+        }
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
-    public void onPrepare(PrepareAnvilEvent event) {
-        // Never cancel; just override result/cost when it's OUR /ea GUI
-        sessions.handlePrepare(event);
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        sessions.handleClose(event.getPlayer());
     }
 }
