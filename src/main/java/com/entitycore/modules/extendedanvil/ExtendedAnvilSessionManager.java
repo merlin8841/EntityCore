@@ -37,7 +37,11 @@ public final class ExtendedAnvilSessionManager {
         Inventory inv = PlayerMenu.create(player);
         openGui.put(player.getUniqueId(), GuiType.PLAYER);
         player.openInventory(inv);
-        player.playSound(player.getLocation(), Sound.BLOCK_CHEST_OPEN, 1f, 1f);
+        player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_PLACE, 0.8f, 1.0f);
+
+        Bukkit.getScheduler().runTask(plugin, () ->
+                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
+        );
     }
 
     public void openAdminMenu(Player player) {
@@ -72,12 +76,11 @@ public final class ExtendedAnvilSessionManager {
         if (t == GuiType.PLAYER) {
             if (!PlayerMenu.isThis(event.getView())) return;
 
+            // Block dragging into output slot
             for (int raw : event.getRawSlots()) {
-                if (raw < event.getView().getTopInventory().getSize()) {
-                    if (raw != PlayerMenu.SLOT_ITEM && raw != PlayerMenu.SLOT_BOOK) {
-                        event.setCancelled(true);
-                        return;
-                    }
+                if (raw == PlayerMenu.SLOT_OUTPUT) {
+                    event.setCancelled(true);
+                    return;
                 }
             }
 
@@ -99,7 +102,7 @@ public final class ExtendedAnvilSessionManager {
 
         if (t == GuiType.PLAYER) {
             if (!PlayerMenu.isThis(event.getView())) return;
-            handlePlayerMenuClick(player, event);
+            handlePlayerAnvilClick(player, event);
             return;
         }
 
@@ -125,63 +128,47 @@ public final class ExtendedAnvilSessionManager {
     }
 
     /* =========================================================
-       PLAYER MENU
+       PLAYER ANVIL GUI
        ========================================================= */
 
-    private void handlePlayerMenuClick(Player player, InventoryClickEvent event) {
-        int topSize = event.getView().getTopInventory().getSize();
+    private void handlePlayerAnvilClick(Player player, InventoryClickEvent event) {
         int raw = event.getRawSlot();
+        Inventory top = event.getView().getTopInventory();
 
-        // bottom inventory clicks allowed (but block shift-dump)
-        if (raw >= topSize) {
-            if (event.isShiftClick()) event.setCancelled(true);
-            return;
-        }
-
-        Inventory inv = event.getView().getTopInventory();
-
-        boolean isInput = (raw == PlayerMenu.SLOT_ITEM || raw == PlayerMenu.SLOT_BOOK);
-        boolean isOutput = (raw == PlayerMenu.SLOT_OUTPUT);
-        boolean isButton = (raw == PlayerMenu.SLOT_MODE || raw == PlayerMenu.SLOT_DO || raw == PlayerMenu.SLOT_CLOSE);
-
-        if (!isInput && !isOutput && !isButton) {
-            event.setCancelled(true);
-            return;
-        }
-
-        if (raw == PlayerMenu.SLOT_CLOSE) {
-            event.setCancelled(true);
-            player.closeInventory();
-            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-            return;
-        }
-
-        if (raw == PlayerMenu.SLOT_MODE) {
-            event.setCancelled(true);
-            PlayerMenu.toggleMode(inv);
-            PlayerMenu.refreshPreview(player, inv, plugin, config, costService);
-            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-            return;
-        }
-
-        if (raw == PlayerMenu.SLOT_DO || isOutput) {
-            event.setCancelled(true);
-            if (PlayerMenu.getMode(inv) == PlayerMenu.Mode.DISENCHANT) {
-                performDisenchant(player, inv);
-            } else {
-                performApply(player, inv);
-            }
-            return;
-        }
-
-        // input slots: no shift-click
+        // Block shift-click dumping from player inv into the anvil UI (Bedrock safe)
         if (event.isShiftClick()) {
             event.setCancelled(true);
             return;
         }
 
+        // If click is in player inventory (bottom), allow normal (except shift handled above)
+        if (raw >= top.getSize()) return;
+
+        // Block placing into output
+        if (raw == PlayerMenu.SLOT_OUTPUT) {
+            event.setCancelled(true);
+
+            // If there's an output, clicking result should "craft"
+            ItemStack out = top.getItem(PlayerMenu.SLOT_OUTPUT);
+            if (out == null || out.getType() == Material.AIR) {
+                player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+                return;
+            }
+
+            PlayerMenu.Mode mode = PlayerMenu.inferMode(top);
+            if (mode == PlayerMenu.Mode.DISENCHANT) {
+                performDisenchant(player, top);
+            } else if (mode == PlayerMenu.Mode.APPLY) {
+                performApply(player, top);
+            } else {
+                player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            }
+            return;
+        }
+
+        // Inputs (0/1) are allowed; just refresh after the click applies
         Bukkit.getScheduler().runTask(plugin, () ->
-                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
+                PlayerMenu.refreshPreview(player, top, plugin, config, costService)
         );
     }
 
@@ -190,11 +177,11 @@ public final class ExtendedAnvilSessionManager {
         ItemStack books = inv.getItem(PlayerMenu.SLOT_BOOK);
 
         if (item == null || item.getType() == Material.AIR) {
-            msgNo(player, "Put an item in the item slot.");
+            msgNo(player, "Put an item in the left slot.");
             return;
         }
         if (books == null || books.getType() != Material.BOOK || books.getAmount() <= 0) {
-            msgNo(player, "Put at least 1 plain book in the books slot.");
+            msgNo(player, "Put at least 1 plain book in the right slot.");
             return;
         }
         if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
@@ -244,12 +231,14 @@ public final class ExtendedAnvilSessionManager {
         newItem.setItemMeta(meta);
         inv.setItem(PlayerMenu.SLOT_ITEM, newItem);
 
-        // XP refund with diminishing tracking on the item
+        // XP refund (diminishing)
         refundService.refundForRemoval(player, newItem, toRemove);
 
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.0f);
 
-        PlayerMenu.refreshPreview(player, inv, plugin, config, costService);
+        Bukkit.getScheduler().runTask(plugin, () ->
+                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
+        );
         player.updateInventory();
     }
 
@@ -258,11 +247,11 @@ public final class ExtendedAnvilSessionManager {
         ItemStack book = inv.getItem(PlayerMenu.SLOT_BOOK);
 
         if (item == null || item.getType() == Material.AIR) {
-            msgNo(player, "Put an item in the item slot.");
+            msgNo(player, "Put an item in the left slot.");
             return;
         }
         if (book == null || book.getType() != Material.ENCHANTED_BOOK) {
-            msgNo(player, "Put an enchanted book in the books slot.");
+            msgNo(player, "Put an enchanted book in the right slot.");
             return;
         }
         if (item.getType() == Material.ENCHANTED_BOOK || item.getType() == Material.BOOK) {
@@ -298,14 +287,16 @@ public final class ExtendedAnvilSessionManager {
         // consume item
         inv.setItem(PlayerMenu.SLOT_ITEM, null);
 
-        // charge levels (NO CLAMP)
+        // charge levels (NO clamp)
         if (!creative && preview.levelCost > 0) {
             player.giveExpLevels(-preview.levelCost);
         }
 
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.0f);
 
-        PlayerMenu.refreshPreview(player, inv, plugin, config, costService);
+        Bukkit.getScheduler().runTask(plugin, () ->
+                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
+        );
         player.updateInventory();
     }
 
@@ -315,7 +306,7 @@ public final class ExtendedAnvilSessionManager {
     }
 
     /* =========================================================
-       ADMIN MENUS
+       ADMIN MENUS (unchanged)
        ========================================================= */
 
     private void handleAdminMenuClick(Player player, InventoryClickEvent event) {
