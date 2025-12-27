@@ -14,15 +14,9 @@ public final class ExtendedAnvilCommand implements CommandExecutor {
     }
 
     @Override
-    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
         if (!(sender instanceof Player player)) return true;
-
-        if (!player.hasPermission("entitycore.extendedanvil.use")) {
-            player.sendMessage("§cYou do not have permission to use Extended Anvil.");
-            return true;
-        }
-
-        sessions.open(player);
+        sessions.openPlayerMenu(player);
         return true;
     }
 }
