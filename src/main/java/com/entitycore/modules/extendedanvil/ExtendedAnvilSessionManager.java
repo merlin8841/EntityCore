@@ -7,6 +7,7 @@ import org.bukkit.Sound;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.*;
+import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -21,10 +22,15 @@ public final class ExtendedAnvilSessionManager {
     private final XpRefundService refundService;
     private final EnchantCostService costService;
 
-    private final Map<UUID, GuiType> openGui = new HashMap<>();
+    // Track *the exact inventory instance* we opened via /ea for each player.
+    // This avoids Bedrock title issues and avoids catching normal anvils.
+    private final Map<UUID, Inventory> playerEaInv = new HashMap<>();
 
-    // Track Caps page per player
+    // Track caps page per player (admin UI)
     private final Map<UUID, Integer> capsPage = new HashMap<>();
+
+    // Track which admin GUI is open
+    private final Map<UUID, GuiType> openGui = new HashMap<>();
 
     public ExtendedAnvilSessionManager(JavaPlugin plugin,
                                       ExtendedAnvilConfig config,
@@ -42,13 +48,16 @@ public final class ExtendedAnvilSessionManager {
 
     public void openPlayerMenu(Player player) {
         Inventory inv = PlayerMenu.create(player);
+
+        // Store THIS inventory as the session
+        playerEaInv.put(player.getUniqueId(), inv);
         openGui.put(player.getUniqueId(), GuiType.PLAYER);
+
         player.openInventory(inv);
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_PLACE, 0.8f, 1.0f);
 
-        Bukkit.getScheduler().runTask(plugin, () ->
-                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
-        );
+        // Force a prepare pass next tick so Bedrock sees output/cost
+        Bukkit.getScheduler().runTask(plugin, () -> forcePrepare(inv));
     }
 
     public void openAdminMenu(Player player) {
@@ -82,12 +91,43 @@ public final class ExtendedAnvilSessionManager {
     }
 
     /* =========================================================
+       HELPERS
+       ========================================================= */
+
+    private boolean isPlayerEaInventory(Player player, Inventory top) {
+        Inventory ours = playerEaInv.get(player.getUniqueId());
+        return ours != null && ours == top;
+    }
+
+    private void forcePrepare(Inventory inv) {
+        if (inv instanceof AnvilInventory anvil) {
+            // Remove the 39 clamp ALWAYS for /ea GUI
+            anvil.setMaximumRepairCost(999999);
+            // Trigger client refresh
+            anvil.setRepairCost(Math.max(0, anvil.getRepairCost()));
+        }
+    }
+
+    private void msgNo(Player p, String msg) {
+        p.sendMessage("§e" + msg);
+        p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+    }
+
+    /* =========================================================
        EVENTS
        ========================================================= */
 
     public void handleClose(Player player, InventoryCloseEvent event) {
-        openGui.remove(player.getUniqueId());
-        // keep capsPage remembered while server is running (nice QoL)
+        Inventory top = event.getView().getTopInventory();
+
+        // Only clear if they closed OUR exact /ea inventory instance
+        if (isPlayerEaInventory(player, top)) {
+            playerEaInv.remove(player.getUniqueId());
+            openGui.remove(player.getUniqueId());
+        } else {
+            // closing admin GUIs
+            openGui.remove(player.getUniqueId());
+        }
     }
 
     public void handleDrag(Player player, InventoryDragEvent event) {
@@ -95,7 +135,8 @@ public final class ExtendedAnvilSessionManager {
         if (t == null) return;
 
         if (t == GuiType.PLAYER) {
-            if (!PlayerMenu.isThis(event.getView())) return;
+            Inventory top = event.getView().getTopInventory();
+            if (!isPlayerEaInventory(player, top)) return;
 
             // Block dragging into output slot
             for (int raw : event.getRawSlots()) {
@@ -105,13 +146,11 @@ public final class ExtendedAnvilSessionManager {
                 }
             }
 
-            Bukkit.getScheduler().runTask(plugin, () ->
-                    PlayerMenu.refreshPreview(player, event.getView().getTopInventory(), plugin, config, costService)
-            );
+            Bukkit.getScheduler().runTask(plugin, () -> forcePrepare(top));
             return;
         }
 
-        // admin menus: no dragging
+        // admin GUIs: no dragging
         if (t == GuiType.ADMIN && AdminMenu.isThis(event.getView())) event.setCancelled(true);
         if (t == GuiType.PRIORITY && PriorityMenu.isThis(event.getView())) event.setCancelled(true);
         if (t == GuiType.CAPS && CapsMenu.isThis(event.getView())) event.setCancelled(true);
@@ -122,8 +161,10 @@ public final class ExtendedAnvilSessionManager {
         if (t == null) return;
 
         if (t == GuiType.PLAYER) {
-            if (!PlayerMenu.isThis(event.getView())) return;
-            handlePlayerAnvilClick(player, event);
+            Inventory top = event.getView().getTopInventory();
+            if (!isPlayerEaInventory(player, top)) return;
+
+            handlePlayerEaClick(player, event);
             return;
         }
 
@@ -148,25 +189,38 @@ public final class ExtendedAnvilSessionManager {
         }
     }
 
-    /* =========================================================
-       PLAYER ANVIL GUI
-       ========================================================= */
-
-    private void handlePlayerAnvilClick(Player player, InventoryClickEvent event) {
-        int raw = event.getRawSlot();
+    /**
+     * THIS is what makes Bedrock behave: drive result via PrepareAnvilEvent,
+     * and on clicks, only intercept when our modes are active.
+     */
+    private void handlePlayerEaClick(Player player, InventoryClickEvent event) {
         Inventory top = event.getView().getTopInventory();
 
-        // Block shift-click dumping from player inv into the anvil UI (Bedrock safe)
+        // Always remove 39 clamp for this GUI
+        forcePrepare(top);
+
+        // Bedrock safety: block shift-clicks entirely in our GUI
         if (event.isShiftClick()) {
             event.setCancelled(true);
             return;
         }
 
-        // If click is in player inventory (bottom), allow normal (except shift handled above)
+        int raw = event.getRawSlot();
+
+        // If click is in player inventory (bottom), allow normal (non-shift)
         if (raw >= top.getSize()) return;
 
-        // Block placing into output
+        // If they click result slot:
         if (raw == PlayerMenu.SLOT_OUTPUT) {
+            PlayerMenu.Mode mode = PlayerMenu.inferMode(top);
+
+            // If mode NONE, let vanilla anvil do repair/merge/rename (but with clamp removed)
+            if (mode == PlayerMenu.Mode.NONE) {
+                // Do NOT cancel. Vanilla will take over.
+                return;
+            }
+
+            // Otherwise, our custom actions
             event.setCancelled(true);
 
             ItemStack out = top.getItem(PlayerMenu.SLOT_OUTPUT);
@@ -175,7 +229,6 @@ public final class ExtendedAnvilSessionManager {
                 return;
             }
 
-            PlayerMenu.Mode mode = PlayerMenu.inferMode(top);
             if (mode == PlayerMenu.Mode.DISENCHANT) {
                 performDisenchant(player, top);
             } else if (mode == PlayerMenu.Mode.APPLY) {
@@ -183,14 +236,145 @@ public final class ExtendedAnvilSessionManager {
             } else {
                 player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             }
+
+            Bukkit.getScheduler().runTask(plugin, () -> forcePrepare(top));
             return;
         }
 
-        // Inputs (0/1) allowed; refresh after click applies
-        Bukkit.getScheduler().runTask(plugin, () ->
-                PlayerMenu.refreshPreview(player, top, plugin, config, costService)
-        );
+        // For any input click, just force a prepare after changes apply
+        Bukkit.getScheduler().runTask(plugin, () -> forcePrepare(top));
     }
+
+    /* =========================================================
+       PrepareAnvilEvent: sets output + cost for our custom modes
+       ========================================================= */
+
+    public void handlePrepare(PrepareAnvilEvent event) {
+        AnvilInventory inv = event.getInventory();
+        if (inv == null) return;
+
+        // Check if this anvil inventory belongs to one of our /ea sessions
+        Player viewer = null;
+        for (UUID id : playerEaInv.keySet()) {
+            Inventory ours = playerEaInv.get(id);
+            if (ours == inv) {
+                Player p = Bukkit.getPlayer(id);
+                if (p != null && p.getOpenInventory() != null && p.getOpenInventory().getTopInventory() == inv) {
+                    viewer = p;
+                }
+                break;
+            }
+        }
+        if (viewer == null) return; // not our GUI
+
+        // Always uncap for /ea GUI (prevents Too Expensive)
+        inv.setMaximumRepairCost(999999);
+
+        ItemStack item = inv.getItem(PlayerMenu.SLOT_ITEM);
+        ItemStack right = inv.getItem(PlayerMenu.SLOT_BOOK);
+
+        PlayerMenu.Mode mode = PlayerMenu.inferMode(inv);
+
+        // If NONE, we let vanilla do repair/merge/rename; but clamp is removed above.
+        if (mode == PlayerMenu.Mode.NONE) {
+            return;
+        }
+
+        // Our modes override vanilla output
+        if (item == null || item.getType() == Material.AIR) {
+            event.setResult(null);
+            inv.setRepairCost(0);
+            return;
+        }
+
+        if (item.getType() == Material.BOOK || item.getType() == Material.ENCHANTED_BOOK) {
+            event.setResult(errorItem("Can't use books as item"));
+            inv.setRepairCost(0);
+            return;
+        }
+
+        if (mode == PlayerMenu.Mode.DISENCHANT) {
+            if (right == null || right.getType() != Material.BOOK || right.getAmount() <= 0) {
+                event.setResult(null);
+                inv.setRepairCost(0);
+                return;
+            }
+
+            Map<Enchantment, Integer> ench = item.getEnchantments();
+            if (ench == null || ench.isEmpty()) {
+                event.setResult(errorItem("No enchantments"));
+                inv.setRepairCost(0);
+                return;
+            }
+
+            boolean removeAll = (right.getAmount() == 1);
+
+            LinkedHashMap<Enchantment, Integer> toRemove;
+            if (removeAll) {
+                toRemove = PlayerMenu.sortedAllForBook(ench);
+            } else {
+                Enchantment chosen = config.chooseNextDisenchant(ench.keySet());
+                if (chosen == null) {
+                    event.setResult(errorItem("No target enchant"));
+                    inv.setRepairCost(0);
+                    return;
+                }
+                toRemove = new LinkedHashMap<>();
+                toRemove.put(chosen, ench.get(chosen));
+            }
+
+            ItemStack outBook = PlayerMenu.buildEnchantedBook(toRemove);
+            ItemMeta meta = outBook.getItemMeta();
+            if (meta != null) {
+                meta.setLore(List.of(
+                        "§7Mode: §bDisenchant",
+                        "§7Consumes: §f1 book",
+                        removeAll ? "§7Removes: §fall enchants" : "§7Removes: §fone enchant (priority)"
+                ));
+                outBook.setItemMeta(meta);
+            }
+
+            event.setResult(outBook);
+            inv.setRepairCost(1);
+            return;
+        }
+
+        if (mode == PlayerMenu.Mode.APPLY) {
+            if (right == null || right.getType() != Material.ENCHANTED_BOOK) {
+                event.setResult(null);
+                inv.setRepairCost(0);
+                return;
+            }
+
+            EnchantCostService.ApplyPreview preview = costService.previewApply(viewer, item, right);
+            if (!preview.canApply || preview.result == null || preview.result.getType() == Material.AIR) {
+                event.setResult(errorItem("Nothing to apply"));
+                inv.setRepairCost(0);
+                return;
+            }
+
+            // Show the true vanilla-scaled cost, no clamp
+            inv.setRepairCost(Math.max(1, preview.levelCost));
+
+            ItemStack out = preview.result.clone();
+            ItemMeta meta = out.getItemMeta();
+            if (meta != null) {
+                meta.setLore(List.of(
+                        "§7Mode: §dApply",
+                        "§7Cost: §f" + preview.levelCost + " levels",
+                        "§7(Uses vanilla scaling)",
+                        "§7Click result to craft."
+                ));
+                out.setItemMeta(meta);
+            }
+
+            event.setResult(out);
+        }
+    }
+
+    /* =========================================================
+       CUSTOM ACTIONS
+       ========================================================= */
 
     private void performDisenchant(Player player, Inventory inv) {
         ItemStack item = inv.getItem(PlayerMenu.SLOT_ITEM);
@@ -255,10 +439,6 @@ public final class ExtendedAnvilSessionManager {
         refundService.refundForRemoval(player, newItem, toRemove);
 
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.0f);
-
-        Bukkit.getScheduler().runTask(plugin, () ->
-                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
-        );
         player.updateInventory();
     }
 
@@ -313,20 +493,22 @@ public final class ExtendedAnvilSessionManager {
         }
 
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 0.8f, 1.0f);
-
-        Bukkit.getScheduler().runTask(plugin, () ->
-                PlayerMenu.refreshPreview(player, inv, plugin, config, costService)
-        );
         player.updateInventory();
     }
 
-    private void msgNo(Player p, String msg) {
-        p.sendMessage("§e" + msg);
-        p.playSound(p.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+    private static ItemStack errorItem(String msg) {
+        ItemStack it = new ItemStack(Material.BARRIER, 1);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName("§c" + msg);
+            meta.setLore(List.of("§7Fix inputs and try again."));
+            it.setItemMeta(meta);
+        }
+        return it;
     }
 
     /* =========================================================
-       ADMIN MENUS (unchanged logic)
+       ADMIN MENUS (same logic as before)
        ========================================================= */
 
     private void handleAdminMenuClick(Player player, InventoryClickEvent event) {
@@ -474,7 +656,6 @@ public final class ExtendedAnvilSessionManager {
 
         config.adjustCap(click.enchantKey, delta);
 
-        // Re-render current page
         CapsMenu.render(inv, plugin, config, current);
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
     }
