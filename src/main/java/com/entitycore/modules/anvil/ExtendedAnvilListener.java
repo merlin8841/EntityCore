@@ -23,7 +23,7 @@ public final class ExtendedAnvilListener implements Listener {
     private final JavaPlugin plugin;
     private final XpRefundService refundService;
 
-    private final Map<Integer, Mode> modes = new HashMap<>();
+    private final Map<Integer, Mode> modes = new HashMap<Integer, Mode>();
 
     public ExtendedAnvilListener(JavaPlugin plugin, XpRefundService refundService) {
         this.plugin = plugin;
@@ -52,9 +52,9 @@ public final class ExtendedAnvilListener implements Listener {
             return;
         }
 
-        // Disenchant mode: right is plain BOOK(s)
+        // DISENCHANT MODE: right is plain BOOK(s)
         if (right.getType() == Material.BOOK) {
-            Map<Enchantment, Integer> current = new HashMap<>(left.getEnchantments());
+            Map<Enchantment, Integer> current = new HashMap<Enchantment, Integer>(left.getEnchantments());
             if (current.isEmpty()) {
                 event.setResult(null);
                 inv.setRepairCost(0);
@@ -74,12 +74,11 @@ public final class ExtendedAnvilListener implements Listener {
 
             event.setResult(buildEnchantedBook(extracted));
             inv.setRepairCost(0);
-
             modes.put(key, Mode.DISENCHANT);
             return;
         }
 
-        // Apply book mode: right is enchanted book
+        // APPLY BOOK MODE: right is enchanted book
         if (isEnchantedBook(right) && !isBook(left)) {
             Map<Enchantment, Integer> bookEnchants = getStoredEnchants(right);
             if (bookEnchants.isEmpty()) return;
@@ -88,9 +87,10 @@ public final class ExtendedAnvilListener implements Listener {
             ItemMeta meta = result.getItemMeta();
             if (meta == null) return;
 
-            Map<Enchantment, Integer> existing = new HashMap<>(result.getEnchantments());
+            Map<Enchantment, Integer> existing = new HashMap<Enchantment, Integer>(result.getEnchantments());
 
             int applied = 0;
+
             for (Map.Entry<Enchantment, Integer> entry : bookEnchants.entrySet()) {
                 Enchantment ench = entry.getKey();
                 int level = entry.getValue();
@@ -98,6 +98,7 @@ public final class ExtendedAnvilListener implements Listener {
                 if (ench == null) continue;
                 if (!ench.canEnchantItem(result)) continue;
 
+                // vanilla conflict rules
                 boolean conflict = false;
                 for (Enchantment ex : existing.keySet()) {
                     if (ex.equals(ench)) continue;
@@ -108,10 +109,14 @@ public final class ExtendedAnvilListener implements Listener {
                 }
                 if (conflict) continue;
 
+                // cap enforcement (OP-configurable)
+                int cappedLevel = applyCap(ench, level);
+                if (cappedLevel <= 0) continue; // cap 0 means blocked
+
                 int currentLevel = existing.containsKey(ench) ? existing.get(ench) : 0;
-                if (level > currentLevel) {
-                    meta.addEnchant(ench, level, false);
-                    existing.put(ench, level);
+                if (cappedLevel > currentLevel) {
+                    meta.addEnchant(ench, cappedLevel, false);
+                    existing.put(ench, cappedLevel);
                     applied++;
                 }
             }
@@ -126,7 +131,6 @@ public final class ExtendedAnvilListener implements Listener {
             result.setItemMeta(meta);
             event.setResult(result);
             inv.setRepairCost(Math.max(1, applied));
-
             modes.put(key, Mode.APPLY_BOOK);
         }
     }
@@ -162,10 +166,9 @@ public final class ExtendedAnvilListener implements Listener {
         if (left == null || left.getType() == Material.AIR) return;
         if (right == null || right.getType() != Material.BOOK) return;
 
-        // cancel vanilla take, we will perform the operation
         event.setCancelled(true);
 
-        Map<Enchantment, Integer> current = new HashMap<>(left.getEnchantments());
+        Map<Enchantment, Integer> current = new HashMap<Enchantment, Integer>(left.getEnchantments());
         if (current.isEmpty()) return;
 
         int books = Math.max(1, right.getAmount());
@@ -212,7 +215,7 @@ public final class ExtendedAnvilListener implements Listener {
         // clear result slot
         inv.setItem(2, null);
 
-        // XP refund
+        // XP refund (diminishing returns tracked on item)
         int refundedLevels = refundService.refundForRemoval(player, newLeft, extracted);
         if (refundedLevels > 0) {
             player.playSound(player.getLocation(), Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 0.8f, 1.2f);
@@ -221,6 +224,25 @@ public final class ExtendedAnvilListener implements Listener {
         }
 
         player.updateInventory();
+    }
+
+    private int applyCap(Enchantment ench, int level) {
+        String key = ench.getKey().toString();
+        int override = plugin.getConfig().getInt("extendedanvil.caps." + key, Integer.MIN_VALUE);
+
+        // if not set, keep vanilla max by default
+        int cap;
+        if (override == Integer.MIN_VALUE) {
+            cap = ench.getMaxLevel();
+        } else {
+            cap = override;
+        }
+
+        if (cap < 0) cap = ench.getMaxLevel(); // safety: negative treated as default
+        if (cap == 0) return 0;
+
+        if (level > cap) return cap;
+        return level;
     }
 
     private boolean isBook(ItemStack it) {
@@ -237,7 +259,7 @@ public final class ExtendedAnvilListener implements Listener {
         ItemMeta meta = book.getItemMeta();
         if (!(meta instanceof EnchantmentStorageMeta)) return Collections.emptyMap();
         EnchantmentStorageMeta esm = (EnchantmentStorageMeta) meta;
-        return new HashMap<>(esm.getStoredEnchants());
+        return new HashMap<Enchantment, Integer>(esm.getStoredEnchants());
     }
 
     private ItemStack buildEnchantedBook(LinkedHashMap<Enchantment, Integer> enchants) {
@@ -254,7 +276,7 @@ public final class ExtendedAnvilListener implements Listener {
     }
 
     private LinkedHashMap<Enchantment, Integer> extractAll(Map<Enchantment, Integer> current) {
-        List<Enchantment> order = new ArrayList<>(current.keySet());
+        List<Enchantment> order = new ArrayList<Enchantment>(current.keySet());
         Collections.sort(order, new Comparator<Enchantment>() {
             @Override
             public int compare(Enchantment a, Enchantment b) {
@@ -262,17 +284,16 @@ public final class ExtendedAnvilListener implements Listener {
             }
         });
 
-        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<>();
-        for (Enchantment e : order) {
-            out.put(e, current.get(e));
-        }
+        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<Enchantment, Integer>();
+        for (Enchantment e : order) out.put(e, current.get(e));
         return out;
     }
 
     private LinkedHashMap<Enchantment, Integer> extractOne(Map<Enchantment, Integer> current) {
-        Enchantment chosen = DisenchantPriority.chooseOne(current.keySet());
-        if (chosen == null) return new LinkedHashMap<>();
-        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<>();
+        Enchantment chosen = DisenchantPriority.chooseOne(plugin, current.keySet());
+        if (chosen == null) return new LinkedHashMap<Enchantment, Integer>();
+
+        LinkedHashMap<Enchantment, Integer> out = new LinkedHashMap<Enchantment, Integer>();
         out.put(chosen, current.get(chosen));
         return out;
     }
