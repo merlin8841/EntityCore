@@ -1,21 +1,24 @@
 package com.entitycore.modules.extendedanvil;
 
-import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
-import org.bukkit.command.*;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.util.RayTraceResult;
+import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.Collections;
-import java.util.List;
+public final class ExtendedAnvilCommand implements CommandExecutor {
 
-/** /ea opens player GUI, but only while looking at an anvil. */
-public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter {
+    private final JavaPlugin plugin;
+    private final ExtendedAnvilConfig config;
+    private final ExtendedAnvilService service;
 
-    private final ExtendedAnvilGui gui;
-
-    public ExtendedAnvilCommand(ExtendedAnvilGui gui) {
-        this.gui = gui;
+    public ExtendedAnvilCommand(JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
+        this.plugin = plugin;
+        this.config = config;
+        this.service = service;
     }
 
     @Override
@@ -24,31 +27,29 @@ public final class ExtendedAnvilCommand implements CommandExecutor, TabCompleter
             sender.sendMessage("Players only.");
             return true;
         }
+
         if (!player.hasPermission("entitycore.extendedanvil.use")) {
-            player.sendMessage(ChatColor.RED + "No permission.");
+            player.sendMessage("No permission.");
             return true;
         }
 
-        // Require looking at an anvil block (vanilla feel)
-        Block target = player.getTargetBlockExact(5);
+        Block target = getTargetBlock(player);
         if (target == null || !isAnvil(target.getType())) {
-            player.sendMessage(ChatColor.DARK_PURPLE + "[EA] " + ChatColor.RED
-                    + "You must be looking at an anvil to use /ea.");
+            player.sendMessage("You must be looking at an anvil to use /ea.");
             return true;
         }
 
-        gui.open(player);
+        ExtendedAnvilGui.open(player, plugin, config, service);
         return true;
     }
 
-    private boolean isAnvil(Material mat) {
-        return mat == Material.ANVIL
-                || mat == Material.CHIPPED_ANVIL
-                || mat == Material.DAMAGED_ANVIL;
+    private static Block getTargetBlock(Player player) {
+        RayTraceResult r = player.rayTraceBlocks(5.0);
+        if (r == null) return null;
+        return r.getHitBlock();
     }
 
-    @Override
-    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        return Collections.emptyList();
+    private static boolean isAnvil(Material m) {
+        return m == Material.ANVIL || m == Material.CHIPPED_ANVIL || m == Material.DAMAGED_ANVIL;
     }
 }
