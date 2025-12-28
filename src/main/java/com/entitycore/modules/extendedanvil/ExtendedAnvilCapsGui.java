@@ -6,7 +6,8 @@ import org.bukkit.Sound;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.inventory.*;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -61,14 +62,13 @@ public final class ExtendedAnvilCapsGui {
         inv.setItem(53, named(Material.ARROW, "Next Page"));
         inv.setItem(SLOT_BACK, named(Material.ARROW, "Back"));
 
-        // store page in item meta (simple + safe)
         inv.setItem(48, lore(Material.PAPER, "Page",
             List.of(String.valueOf(page)))
         );
     }
 
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        if (!event.getView().getTopInventory().getTitle().equals("EA Enchant Caps")) return;
+        if (!event.getView().getTitle().equals("EA Enchant Caps")) return;
 
         if (!player.hasPermission("entitycore.extendedanvil.admin")) {
             event.setCancelled(true);
