@@ -3,30 +3,27 @@ package com.entitycore.modules.extendedanvil;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.*;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 public final class ExtendedAnvilGui {
 
-    // 6 rows
     private static final int SIZE = 54;
 
-    // Enchanting area
     private static final int SLOT_ENCHANT_ITEM = 20;
     private static final int SLOT_ENCHANT_BOOK = 22;
     private static final int SLOT_ENCHANT_RESULT = 24;
     private static final int SLOT_ENCHANT_APPLY = 29;
 
-    // Disenchanting area
     private static final int SLOT_DISENCHANT_ITEM = 38;
-    private static final int SLOT_DISENCHANT_BOOKS = 40; // empty books
+    private static final int SLOT_DISENCHANT_BOOKS = 40;
     private static final int SLOT_DISENCHANT_RESULT = 42;
     private static final int SLOT_DISENCHANT_APPLY = 47;
 
@@ -71,11 +68,9 @@ public final class ExtendedAnvilGui {
     }
 
     private static void build(Inventory inv) {
-        // Fill background
         ItemStack filler = named(Material.GRAY_STAINED_GLASS_PANE, " ");
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
-        // Clear interactive slots
         inv.setItem(SLOT_ENCHANT_ITEM, null);
         inv.setItem(SLOT_ENCHANT_BOOK, null);
         inv.setItem(SLOT_ENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
@@ -88,7 +83,6 @@ public final class ExtendedAnvilGui {
 
         inv.setItem(SLOT_CLOSE, named(Material.BARRIER, "Close"));
 
-        // Labels
         inv.setItem(11, named(Material.ENCHANTING_TABLE, "Enchanting"));
         inv.setItem(33, named(Material.BOOKSHELF, "Disenchanting"));
     }
@@ -96,7 +90,6 @@ public final class ExtendedAnvilGui {
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
         if (!(event.getInventory().getHolder() instanceof Holder holder)) return;
 
-        // Only owner can interact
         if (!holder.owner().getUniqueId().equals(player.getUniqueId())) {
             event.setCancelled(true);
             return;
@@ -105,7 +98,6 @@ public final class ExtendedAnvilGui {
         int rawSlot = event.getRawSlot();
         Inventory top = event.getView().getTopInventory();
 
-        // Prevent taking background/decor
         if (rawSlot < top.getSize()) {
             if (rawSlot != SLOT_ENCHANT_ITEM &&
                 rawSlot != SLOT_ENCHANT_BOOK &&
@@ -116,7 +108,6 @@ public final class ExtendedAnvilGui {
             }
         }
 
-        // Click on buttons
         if (rawSlot == SLOT_CLOSE) {
             event.setCancelled(true);
             player.closeInventory();
@@ -135,11 +126,7 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        // Restrict what goes where
         if (rawSlot == SLOT_ENCHANT_BOOK) {
-            ItemStack cursor = event.getCursor();
-            ItemStack current = event.getCurrentItem();
-            // allow normal handling, but ensure only enchanted books in this slot
             Bukkit.getScheduler().runTask(plugin, () -> {
                 ItemStack inSlot = top.getItem(SLOT_ENCHANT_BOOK);
                 if (inSlot != null && !service.isEnchantedBook(inSlot)) {
@@ -165,7 +152,6 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        // Refresh preview after any interaction inside top inventory
         if (rawSlot < top.getSize()) {
             Bukkit.getScheduler().runTask(plugin, () -> refreshPreview(player, top, config, service));
         }
@@ -175,7 +161,6 @@ public final class ExtendedAnvilGui {
         Inventory top = event.getView().getTopInventory();
         if (!(top.getHolder() instanceof Holder)) return;
 
-        // Cancel if dragging into non-input slots
         for (int slot : event.getRawSlots()) {
             if (slot < top.getSize()) {
                 if (slot != SLOT_ENCHANT_ITEM &&
@@ -192,7 +177,6 @@ public final class ExtendedAnvilGui {
     public static void handleClose(Player player, InventoryCloseEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
         Inventory top = event.getInventory();
 
-        // Return any items left in input slots
         giveBack(player, top.getItem(SLOT_ENCHANT_ITEM));
         giveBack(player, top.getItem(SLOT_ENCHANT_BOOK));
         giveBack(player, top.getItem(SLOT_DISENCHANT_ITEM));
@@ -204,7 +188,6 @@ public final class ExtendedAnvilGui {
     }
 
     private static void refreshPreview(Player player, Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
-        // Enchant preview
         ItemStack item = top.getItem(SLOT_ENCHANT_ITEM);
         ItemStack book = top.getItem(SLOT_ENCHANT_BOOK);
 
@@ -228,7 +211,6 @@ public final class ExtendedAnvilGui {
             top.setItem(SLOT_ENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
         }
 
-        // Disenchant preview
         ItemStack disItem = top.getItem(SLOT_DISENCHANT_ITEM);
         ItemStack books = top.getItem(SLOT_DISENCHANT_BOOKS);
         int bookCount = books == null ? 0 : books.getAmount();
@@ -281,13 +263,9 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        // Pay
         player.setLevel(player.getLevel() - cost);
 
-        // Consume book
         top.setItem(SLOT_ENCHANT_BOOK, null);
-
-        // Replace item
         top.setItem(SLOT_ENCHANT_ITEM, r.newItem());
 
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 1f, 1f);
@@ -322,7 +300,6 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        // Consume books
         int consume = r.booksConsumed();
         int remaining = count - consume;
         if (remaining <= 0) {
@@ -333,16 +310,13 @@ public final class ExtendedAnvilGui {
             top.setItem(SLOT_DISENCHANT_BOOKS, newBooks);
         }
 
-        // Apply item change
         top.setItem(SLOT_DISENCHANT_ITEM, r.newItem());
 
-        // Give enchanted book output to player inventory
         HashMap<Integer, ItemStack> overflow = player.getInventory().addItem(r.outBook());
         for (ItemStack of : overflow.values()) {
             player.getWorld().dropItemNaturally(player.getLocation(), of);
         }
 
-        // Give levels back
         int give = r.returnLevels();
         player.setLevel(player.getLevel() + give);
 
