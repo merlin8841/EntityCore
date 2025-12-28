@@ -7,24 +7,26 @@ version = '1.0.0'
 
 java {
     toolchain {
-        languageVersion = JavaLanguageVersion.of(17)
+        languageVersion = JavaLanguageVersion.of(21)
     }
 }
 
 repositories {
     mavenCentral()
 
-    // Paper
+    // Paper (API + snapshots)
     maven { url = "https://repo.papermc.io/repository/maven-public/" }
 
-    // Floodgate/Geyser (OpenCollab snapshots)
+    // OpenCollab: Floodgate/Geyser snapshots + releases (Cumulus is in releases)
+    maven { url = "https://repo.opencollab.dev/maven-releases/" }
     maven { url = "https://repo.opencollab.dev/maven-snapshots/" }
 }
 
 dependencies {
+    // Paper 1.21.10 API (requires Java 21 toolchain)
     compileOnly "io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT"
 
-    // Optional integrations (compileOnly): plugin still runs without them installed.
+    // Optional integration (compileOnly)
     compileOnly "org.geysermc.floodgate:api:2.2.4-SNAPSHOT"
 }
 
