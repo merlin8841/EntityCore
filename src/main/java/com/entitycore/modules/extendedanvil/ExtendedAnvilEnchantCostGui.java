@@ -39,11 +39,9 @@ public final class ExtendedAnvilEnchantCostGui {
     public static final int SLOT_SAVE = 50;
 
     private final ExtendedAnvilConfig config;
-    private final ExtendedAnvilAdminGui adminGui;
 
-    public ExtendedAnvilEnchantCostGui(ExtendedAnvilConfig config, ExtendedAnvilAdminGui adminGui) {
+    public ExtendedAnvilEnchantCostGui(ExtendedAnvilConfig config) {
         this.config = config;
-        this.adminGui = adminGui;
     }
 
     public void openList(Player player, int page) {
@@ -55,9 +53,15 @@ public final class ExtendedAnvilEnchantCostGui {
         ItemStack filler = ExtendedAnvilUtil.filler();
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
+        inv.setItem(4, ExtendedAnvilUtil.info(Material.ENCHANTED_BOOK, "Per-enchant costs", List.of(
+                "Costs are XP LEVELS",
+                "Base + Per-level add",
+                "Tap an enchant to edit"
+        )));
+
         drawList(inv, page);
 
-        inv.setItem(SLOT_BACK, ExtendedAnvilUtil.button(Material.BARRIER, "Back", List.of("Return to settings")));
+        inv.setItem(SLOT_BACK, ExtendedAnvilUtil.button(Material.BARRIER, "Back", List.of("Return to admin")));
         inv.setItem(SLOT_PREV, ExtendedAnvilUtil.button(Material.ARROW, "Prev", List.of("Previous page")));
         inv.setItem(SLOT_NEXT, ExtendedAnvilUtil.button(Material.ARROW, "Next", List.of("Next page")));
 
@@ -89,35 +93,25 @@ public final class ExtendedAnvilEnchantCostGui {
             ));
             inv.setItem(i, it);
         }
-
-        inv.setItem(4, ExtendedAnvilUtil.info(Material.BOOK, "Per-Enchant Costs", List.of(
-                "Bedrock-friendly editor",
-                "Base cost applies once per enchant",
-                "Per-level cost applies for levels above 1",
-                "",
-                "Example: base 2, per-level 1",
-                "Level 1 => 2",
-                "Level 3 => 2 + (1*2) = 4"
-        )));
     }
 
     public void openEdit(Player player, String enchantKey) {
         ExtendedAnvilHolder holder = new ExtendedAnvilHolder(ExtendedAnvilHolder.Type.ENCHANT_COST_EDIT, player.getUniqueId());
         holder.setContextKey(enchantKey);
-        Inventory inv = Bukkit.createInventory(holder, SIZE, ChatColor.DARK_RED + "EA Cost Editor");
+        Inventory inv = Bukkit.createInventory(holder, SIZE, ChatColor.DARK_RED + "EA Cost Edit");
         holder.setInventory(inv);
-
-        ItemStack filler = ExtendedAnvilUtil.filler();
-        for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
         drawEdit(inv, enchantKey);
         player.openInventory(inv);
     }
 
     public void drawEdit(Inventory inv, String enchantKey) {
-        String nice = ExtendedAnvilUtil.prettyEnchantName(enchantKey);
+        ItemStack filler = ExtendedAnvilUtil.filler();
+        for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
+
         int base = config.getEnchantBaseCost(enchantKey);
         int perLvl = config.getEnchantPerLevelCost(enchantKey);
+        String nice = ExtendedAnvilUtil.prettyEnchantName(enchantKey);
 
         inv.setItem(SLOT_EDIT_TITLE, ExtendedAnvilUtil.info(Material.ENCHANTED_BOOK, nice, List.of(
                 "Key: " + enchantKey,
@@ -140,9 +134,5 @@ public final class ExtendedAnvilEnchantCostGui {
 
         inv.setItem(SLOT_EDIT_BACK, ExtendedAnvilUtil.button(Material.BARRIER, "Back", List.of("Return to list")));
         inv.setItem(SLOT_SAVE, ExtendedAnvilUtil.button(Material.LIME_DYE, "Save", List.of("Write to extendedanvil.yml")));
-    }
-
-    public void backToSettings(Player player) {
-        adminGui.open(player);
     }
 }

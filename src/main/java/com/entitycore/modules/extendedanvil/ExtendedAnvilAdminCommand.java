@@ -19,27 +19,22 @@ public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabComp
 
     public static final String PERMISSION = "entitycore.extendedanvil.admin";
 
-    private final ExtendedAnvilAdminGui gui;
+    private final ExtendedAnvilAdminMainGui gui;
 
-    public ExtendedAnvilAdminCommand(ExtendedAnvilAdminGui gui) {
+    public ExtendedAnvilAdminCommand(ExtendedAnvilAdminMainGui gui) {
         this.gui = gui;
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        // Player-only
         if (!(sender instanceof Player player)) {
             sender.sendMessage(ChatColor.RED + "This command can only be used in-game.");
             return true;
         }
-
-        // Operator permission
         if (!player.hasPermission(PERMISSION)) {
             player.sendMessage(ChatColor.RED + "No permission.");
             return true;
         }
-
-        // Safety guard (prevents NPE if module wiring ever breaks)
         if (gui == null) {
             player.sendMessage(ChatColor.RED + "ExtendedAnvil admin GUI is not available (module not initialized).");
             return true;
@@ -51,7 +46,6 @@ public final class ExtendedAnvilAdminCommand implements CommandExecutor, TabComp
             player.sendMessage(ChatColor.RED + "Failed to open ExtendedAnvil admin GUI. Check console for details.");
             t.printStackTrace();
         }
-
         return true;
     }
 

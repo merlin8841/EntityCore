@@ -22,9 +22,13 @@ public final class ExtendedAnvilGuiModule implements Module {
     private ExtendedAnvilService service;
 
     private ExtendedAnvilGui playerGui;
-    private ExtendedAnvilAdminGui adminGui;
+    private ExtendedAnvilAdminMainGui adminMainGui;
+    private ExtendedAnvilRefundGui refundGui;
+    private ExtendedAnvilApplyCostGui applyCostGui;
+    private ExtendedAnvilGeneralGui generalGui;
     private ExtendedAnvilPriorityGui priorityGui;
     private ExtendedAnvilEnchantCostGui costGui;
+    private ExtendedAnvilEnchantCapGui capGui;
 
     private ExtendedAnvilListener listener;
 
@@ -45,16 +49,22 @@ public final class ExtendedAnvilGuiModule implements Module {
 
         this.service = new ExtendedAnvilService(plugin, config);
 
-        this.adminGui = new ExtendedAnvilAdminGui(plugin, config);
+        this.adminMainGui = new ExtendedAnvilAdminMainGui(config);
+        this.refundGui = new ExtendedAnvilRefundGui(config);
+        this.applyCostGui = new ExtendedAnvilApplyCostGui(config);
+        this.generalGui = new ExtendedAnvilGeneralGui(config);
         this.priorityGui = new ExtendedAnvilPriorityGui(plugin, config);
-        this.costGui = new ExtendedAnvilEnchantCostGui(config, adminGui);
+        this.costGui = new ExtendedAnvilEnchantCostGui(config);
+        this.capGui = new ExtendedAnvilEnchantCapGui(config);
         this.playerGui = new ExtendedAnvilGui(plugin, config, service);
 
-        this.listener = new ExtendedAnvilListener(plugin, config, service, playerGui, adminGui, priorityGui, costGui);
+        this.listener = new ExtendedAnvilListener(plugin, config, service,
+                playerGui, adminMainGui, refundGui, applyCostGui, generalGui,
+                priorityGui, costGui, capGui);
         Bukkit.getPluginManager().registerEvents(listener, plugin);
 
         this.playerCommand = new ExtendedAnvilCommand(playerGui);
-        this.adminCommand = new ExtendedAnvilAdminCommand(adminGui);
+        this.adminCommand = new ExtendedAnvilAdminCommand(adminMainGui);
 
         PluginCommand ea = plugin.getCommand("ea");
         if (ea != null) {
@@ -75,9 +85,10 @@ public final class ExtendedAnvilGuiModule implements Module {
         plugin.getLogger().info("[ExtendedAnvil] Enabled"
                 + " refund=" + config.getRefundPercentFirst() + "%/"
                 + config.getRefundPercentSecond() + "%/"
-                + config.getRefundPercentLater() + "%"
+                + config.getRefundPercentLast() + "%"
                 + ", fallbackRefundLvlsPerEnchantLvl=" + config.getRefundLevelsPerEnchantLevel()
                 + ", allowCurseRemoval=" + config.isAllowCurseRemoval()
+                + ", debug=" + config.isDebug()
                 + ", priorWork(cost/inc)=" + config.getPriorWorkCostPerStep() + "/" + config.getPriorWorkIncrementPerApply()
         );
     }
@@ -92,9 +103,13 @@ public final class ExtendedAnvilGuiModule implements Module {
         config = null;
         service = null;
         playerGui = null;
-        adminGui = null;
+        adminMainGui = null;
+        refundGui = null;
+        applyCostGui = null;
+        generalGui = null;
         priorityGui = null;
         costGui = null;
+        capGui = null;
         listener = null;
         playerCommand = null;
         adminCommand = null;

@@ -84,14 +84,19 @@ public final class ExtendedAnvilService {
             int newLevel = entry.getValue() == null ? 0 : entry.getValue();
             if (ench == null || newLevel <= 0) continue;
 
+            String ek = ExtendedAnvilUtil.enchantKey(ench);
+            int cap = config.getEnchantMaxLevel(ek);
+            int effectiveLevel = Math.min(newLevel, cap);
+            if (effectiveLevel <= 0) continue;
+
             if (!ench.canEnchantItem(item)) {
                 return ApplyResult.fail(ChatColor.RED + "Can't apply "
-                        + ExtendedAnvilUtil.prettyEnchantName(ExtendedAnvilUtil.enchantKey(ench)) + " to that item.");
+                        + ExtendedAnvilUtil.prettyEnchantName(ek) + " to that item.");
             }
 
             int cur = itemMeta.getEnchantLevel(ench);
-            if (newLevel > cur) {
-                applicable.add(entry);
+            if (effectiveLevel > cur) {
+                applicable.add(new java.util.AbstractMap.SimpleEntry<>(ench, effectiveLevel));
             }
         }
 
@@ -173,7 +178,10 @@ public final class ExtendedAnvilService {
             if (ench == null || lvl <= 0) continue;
 
             int cur = merged.getOrDefault(ench, 0);
-            merged.put(ench, Math.max(cur, lvl));
+            String ek = ExtendedAnvilUtil.enchantKey(ench);
+            int cap = config.getEnchantMaxLevel(ek);
+            int newLevel = Math.min(Math.max(cur, lvl), cap);
+            merged.put(ench, newLevel);
         }
 
         // Reject conflicts inside merged set (avoid insane books)
@@ -312,7 +320,7 @@ public final class ExtendedAnvilService {
             int pct;
             if (newCount <= 1) pct = config.getRefundPercentFirst();
             else if (newCount == 2) pct = config.getRefundPercentSecond();
-            else pct = config.getRefundPercentLater();
+            else pct = config.getRefundPercentLast();
 
             refundLevels += (intrinsicCost * pct) / 100;
         }

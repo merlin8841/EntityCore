@@ -8,7 +8,11 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 public final class ExtendedAnvilConfig {
 
@@ -21,12 +25,13 @@ public final class ExtendedAnvilConfig {
     // Refund tuning (LEVELS, not raw XP)
     private int refundPercentFirst = 75;
     private int refundPercentSecond = 25;
-    private int refundPercentLater = 0;
+    private int refundPercentLast = 0;
 
     /** Fallback refund value when a book/item has no stored cost metadata. */
     private int refundLevelsPerEnchantLevel = 4;
 
     private boolean allowCurseRemoval = true;
+    private boolean debug = false;
 
     // Global adders (keep simple defaults; most balance comes from per-enchant cost)
     private int applyCostGlobalBaseLevels = 0;
@@ -41,6 +46,8 @@ public final class ExtendedAnvilConfig {
     private final Map<String, Integer> enchantBaseCost = new LinkedHashMap<>();
     /** Per-enchant per-level add (LEVELS per level above 1). */
     private final Map<String, Integer> enchantPerLevelCost = new LinkedHashMap<>();
+    /** Per-enchant max level (cap). Defaults to vanilla. */
+    private final Map<String, Integer> enchantMaxLevel = new LinkedHashMap<>();
 
     /** Enchant priority list (top = removed first). Stored as namespaced keys. */
     private final List<String> priority = new ArrayList<>();
@@ -58,10 +65,17 @@ public final class ExtendedAnvilConfig {
 
         refundPercentFirst = clampInt(yml.getInt("refund.percent.first", refundPercentFirst), 0, 100);
         refundPercentSecond = clampInt(yml.getInt("refund.percent.second", refundPercentSecond), 0, 100);
-        refundPercentLater = clampInt(yml.getInt("refund.percent.later", refundPercentLater), 0, 100);
+        int last = yml.getInt("refund.percent.last", refundPercentLast);
+        if (!yml.contains("refund.percent.last")) {
+            // Backward-compat: old key was .later
+            last = yml.getInt("refund.percent.later", refundPercentLast);
+        }
+        refundPercentLast = clampInt(last, 0, 100);
 
         refundLevelsPerEnchantLevel = clampInt(yml.getInt("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel), 0, 1000);
         allowCurseRemoval = yml.getBoolean("disenchant.allowCurseRemoval", allowCurseRemoval);
+
+        debug = yml.getBoolean("debug", debug);
 
         applyCostGlobalBaseLevels = clampInt(yml.getInt("enchant.applyCost.globalBaseLevels", applyCostGlobalBaseLevels), 0, 1000);
         applyCostPerEnchantAdd = clampInt(yml.getInt("enchant.applyCost.addPerEnchant", applyCostPerEnchantAdd), 0, 1000);
@@ -88,24 +102,30 @@ public final class ExtendedAnvilConfig {
             }
         }
 
-        // Priority list
-        priority.clear();
-        List<String> raw = yml.getStringList("disenchant.priority");
-        if (raw != null) {
-            for (String s : raw) {
-                if (s == null || s.trim().isEmpty()) continue;
-                priority.add(s.trim().toLowerCase());
+        // Caps
+        enchantMaxLevel.clear();
+        ConfigurationSection capSec = yml.getConfigurationSection("enchant.maxLevel");
+        if (capSec != null) {
+            for (String k : capSec.getKeys(false)) {
+                int v = clampInt(capSec.getInt(k), 1, 1000);
+                enchantMaxLevel.put(k.toLowerCase(), v);
             }
         }
 
-        // Seed missing entries so both YAML + GUI can manage everything
-        ensureAllKnownEnchantsPresent();
-        if (priority.isEmpty()) {
-            seedPriorityWithAllEnchants();
-        } else {
-            ensureAllKnownEnchantsInPriority();
+        // Priority
+        priority.clear();
+        List<String> list = yml.getStringList("disenchant.priority");
+        if (list != null) {
+            for (String s : list) {
+                if (s == null || s.isBlank()) continue;
+                priority.add(s.toLowerCase());
+            }
         }
 
+        // Ensure we always have keys for known enchants (vanilla defaults)
+        ensureAllKnownEnchantsPresent();
+
+        // Save once so new keys appear
         save();
     }
 
@@ -114,10 +134,14 @@ public final class ExtendedAnvilConfig {
 
         yml.set("refund.percent.first", refundPercentFirst);
         yml.set("refund.percent.second", refundPercentSecond);
-        yml.set("refund.percent.later", refundPercentLater);
-        yml.set("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel);
+        yml.set("refund.percent.last", refundPercentLast);
+        // Backward-compat: keep writing old key too so older builds don't break
+        yml.set("refund.percent.later", refundPercentLast);
 
+        yml.set("refund.levelsPerEnchantLevel", refundLevelsPerEnchantLevel);
         yml.set("disenchant.allowCurseRemoval", allowCurseRemoval);
+
+        yml.set("debug", debug);
 
         yml.set("enchant.applyCost.globalBaseLevels", applyCostGlobalBaseLevels);
         yml.set("enchant.applyCost.addPerEnchant", applyCostPerEnchantAdd);
@@ -128,6 +152,7 @@ public final class ExtendedAnvilConfig {
 
         yml.set("enchant.baseCost", new LinkedHashMap<>(enchantBaseCost));
         yml.set("enchant.perLevelCost", new LinkedHashMap<>(enchantPerLevelCost));
+        yml.set("enchant.maxLevel", new LinkedHashMap<>(enchantMaxLevel));
 
         yml.set("disenchant.priority", new ArrayList<>(priority));
 
@@ -152,14 +177,22 @@ public final class ExtendedAnvilConfig {
     public int getRefundPercentSecond() { return refundPercentSecond; }
     public void setRefundPercentSecond(int v) { refundPercentSecond = clampInt(v, 0, 100); }
 
-    public int getRefundPercentLater() { return refundPercentLater; }
-    public void setRefundPercentLater(int v) { refundPercentLater = clampInt(v, 0, 100); }
+    public int getRefundPercentLast() { return refundPercentLast; }
+    public void setRefundPercentLast(int v) { refundPercentLast = clampInt(v, 0, 100); }
+
+    /** Backward compat: old name was "Later". */
+    public int getRefundPercentLater() { return refundPercentLast; }
+    /** Backward compat: old name was "Later". */
+    public void setRefundPercentLater(int v) { setRefundPercentLast(v); }
 
     public int getRefundLevelsPerEnchantLevel() { return refundLevelsPerEnchantLevel; }
     public void setRefundLevelsPerEnchantLevel(int v) { refundLevelsPerEnchantLevel = clampInt(v, 0, 1000); }
 
     public boolean isAllowCurseRemoval() { return allowCurseRemoval; }
     public void setAllowCurseRemoval(boolean v) { allowCurseRemoval = v; }
+
+    public boolean isDebug() { return debug; }
+    public void setDebug(boolean v) { debug = v; }
 
     // --- Global apply cost adders ---
 
@@ -205,76 +238,65 @@ public final class ExtendedAnvilConfig {
         enchantPerLevelCost.put(enchantKey.toLowerCase(), clampInt(v, 0, 1000));
     }
 
+    // --- Caps ---
+
+    public Map<String, Integer> getEnchantMaxLevelMap() { return enchantMaxLevel; }
+
+    public int getEnchantMaxLevel(String enchantKey) {
+        if (enchantKey == null) return 1;
+        int def = 1;
+        try {
+            Enchantment e = Enchantment.getByKey(NamespacedKey.fromString(enchantKey));
+            if (e != null) def = Math.max(1, e.getMaxLevel());
+        } catch (Throwable ignored) {}
+        return clampInt(enchantMaxLevel.getOrDefault(enchantKey.toLowerCase(), def), 1, 1000);
+    }
+
+    public void setEnchantMaxLevel(String enchantKey, int v) {
+        if (enchantKey == null) return;
+        enchantMaxLevel.put(enchantKey.toLowerCase(), clampInt(v, 1, 1000));
+    }
+
     // --- Priority ---
 
     public List<String> getPriority() { return priority; }
 
-    public void movePriority(String key, int newIndex) {
+    public void movePriority(String key, int toIndex) {
         if (key == null) return;
-        key = key.toLowerCase();
-        int old = priority.indexOf(key);
-        if (old < 0) return;
-
-        newIndex = Math.max(0, Math.min(priority.size() - 1, newIndex));
-        if (old == newIndex) return;
-
-        priority.remove(old);
-        priority.add(newIndex, key);
+        int from = priority.indexOf(key);
+        if (from < 0) return;
+        if (toIndex < 0) toIndex = 0;
+        if (toIndex >= priority.size()) toIndex = priority.size() - 1;
+        if (from == toIndex) return;
+        priority.remove(from);
+        priority.add(toIndex, key);
     }
 
-    private void seedPriorityWithAllEnchants() {
-        priority.clear();
-        for (Enchantment e : Enchantment.values()) {
-            NamespacedKey key = e.getKey();
-            if (key == null) continue;
-            priority.add(key.toString().toLowerCase());
-        }
-    }
-
-    private void ensureAllKnownEnchantsInPriority() {
-        Set<String> set = new LinkedHashSet<>(priority);
-        for (Enchantment e : Enchantment.values()) {
-            NamespacedKey key = e.getKey();
-            if (key == null) continue;
-            set.add(key.toString().toLowerCase());
-        }
-        priority.clear();
-        priority.addAll(set);
-    }
+    // --- Internal helpers ---
 
     private void ensureAllKnownEnchantsPresent() {
-        // Seed default costs for all known enchants if missing.
-        // These defaults are intentionally low; you can tune in GUI/YAML.
+        Map<String, Enchantment> known = new HashMap<>();
         for (Enchantment e : Enchantment.values()) {
-            NamespacedKey k = e.getKey();
-            if (k == null) continue;
-            String key = k.toString().toLowerCase();
-            enchantBaseCost.putIfAbsent(key, defaultBaseCostFor(key));
-            enchantPerLevelCost.putIfAbsent(key, defaultPerLevelCostFor(key));
+            if (e == null || e.getKey() == null) continue;
+            String key = e.getKey().toString().toLowerCase();
+            known.putIfAbsent(key, e);
         }
-    }
 
-    private int defaultBaseCostFor(String key) {
-        // Sensible "vanilla-ish" starting points, not perfect parity.
-        if (key == null) return 0;
-        if (key.endsWith("mending")) return 2;
-        if (key.endsWith("unbreaking")) return 2;
-        if (key.endsWith("efficiency")) return 2;
-        if (key.endsWith("sharpness") || key.endsWith("protection")) return 2;
-        if (key.endsWith("fortune") || key.endsWith("looting")) return 3;
-        if (key.endsWith("silk_touch")) return 3;
-        if (key.endsWith("thorns")) return 4;
-        if (key.endsWith("swift_sneak")) return 4;
-        return 1;
-    }
+        // Default costs + caps to vanilla-ish
+        for (Map.Entry<String, Enchantment> en : known.entrySet()) {
+            String key = en.getKey();
+            Enchantment e = en.getValue();
+            enchantBaseCost.putIfAbsent(key, 1);
+            enchantPerLevelCost.putIfAbsent(key, 1);
+            enchantMaxLevel.putIfAbsent(key, Math.max(1, e.getMaxLevel()));
+        }
 
-    private int defaultPerLevelCostFor(String key) {
-        if (key == null) return 0;
-        if (key.endsWith("mending") || key.endsWith("silk_touch")) return 0;
-        if (key.endsWith("fortune") || key.endsWith("looting")) return 2;
-        if (key.endsWith("efficiency") || key.endsWith("sharpness") || key.endsWith("protection")) return 1;
-        if (key.endsWith("unbreaking")) return 1;
-        return 1;
+        // Priority: if missing or empty, seed with sorted keys
+        if (priority.isEmpty()) {
+            List<String> keys = new ArrayList<>(known.keySet());
+            keys.sort(String::compareTo);
+            priority.addAll(keys);
+        }
     }
 
     private static int clampInt(int v, int min, int max) {
