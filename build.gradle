@@ -14,14 +14,18 @@ java {
 repositories {
     mavenCentral()
 
-    maven {
-        name = "papermc"
-        url = "https://repo.papermc.io/repository/maven-public/"
-    }
+    // Paper
+    maven { url = "https://repo.papermc.io/repository/maven-public/" }
+
+    // Floodgate/Geyser (OpenCollab snapshots)
+    maven { url = "https://repo.opencollab.dev/maven-snapshots/" }
 }
 
 dependencies {
-    compileOnly "io.papermc.paper:paper-api:1.20.4-R0.1-SNAPSHOT"
+    compileOnly "io.papermc.paper:paper-api:1.21.10-R0.1-SNAPSHOT"
+
+    // Optional integrations (compileOnly): plugin still runs without them installed.
+    compileOnly "org.geysermc.floodgate:api:2.2.4-SNAPSHOT"
 }
 
 tasks.withType(JavaCompile).configureEach {
