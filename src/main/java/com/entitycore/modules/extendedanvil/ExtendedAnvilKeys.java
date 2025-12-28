@@ -1,32 +1,28 @@
 package com.entitycore.modules.extendedanvil;
 
 import org.bukkit.NamespacedKey;
-import org.bukkit.plugin.Plugin;
+import org.bukkit.enchantments.Enchantment;
+import org.bukkit.plugin.java.JavaPlugin;
 
-/** NamespacedKeys used by ExtendedAnvil. */
 public final class ExtendedAnvilKeys {
 
-    private ExtendedAnvilKeys() {}
+    private final JavaPlugin plugin;
 
-    /** Tracks how many times a specific enchant has been removed from an item. */
-    public static NamespacedKey removalCount(Plugin plugin, String enchantKey) {
-        String safe = safeKey(enchantKey);
-        return new NamespacedKey(plugin, "ea_removed_" + safe);
+    public ExtendedAnvilKeys(JavaPlugin plugin) {
+        this.plugin = plugin;
     }
 
-    /** Vanilla-like "prior work" counter stored on items that are modified via /ea. */
-    public static NamespacedKey priorWork(Plugin plugin) {
-        return new NamespacedKey(plugin, "ea_prior_work");
+    public NamespacedKey addCountKey(Enchantment ench) {
+        return new NamespacedKey(plugin, "ea_add_" + safeKey(ench));
     }
 
-    /** Stored per-enchant intrinsic cost on enchanted books (so combining/reapplying stays consistent). */
-    public static NamespacedKey bookEnchantCost(Plugin plugin, String enchantKey) {
-        String safe = safeKey(enchantKey);
-        return new NamespacedKey(plugin, "ea_cost_" + safe);
+    public NamespacedKey removeCountKey(Enchantment ench) {
+        return new NamespacedKey(plugin, "ea_rem_" + safeKey(ench));
     }
 
-    private static String safeKey(String enchantKey) {
-        if (enchantKey == null) return "unknown";
-        return enchantKey.toLowerCase().replace(':', '_');
+    private static String safeKey(Enchantment ench) {
+        if (ench == null || ench.getKey() == null) return "unknown";
+        // namespace:key -> namespace__key
+        return ench.getKey().getNamespace() + "__" + ench.getKey().getKey();
     }
 }
