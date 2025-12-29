@@ -24,10 +24,6 @@ commands:
     description: Opens the Extended Anvil admin GUI (Operator only)
     usage: /eaadmin
 
-  prov:
-    description: Provenance tools (Operator only)
-    usage: /prov <markunnatural|marknatural|restamp> [source]
-
 permissions:
   entitycore.hopperfilters.use:
     description: Allows using hopper filters
@@ -41,16 +37,6 @@ permissions:
     default: true
   entitycore.extendedanvil.admin:
     description: Operator-only Extended Anvil settings
-    default: op
-
-  entitycore.provenance.op:
-    description: Operator-only provenance tools (/prov ...)
-    default: op
-  entitycore.provenance.hook:
-    description: Allows provenance tagging hook for /give and /item give (Operator-only by default)
-    default: op
-  entitycore.provenance.alerts:
-    description: Receives alerts when unnatural items are blocked from shop inventories
     default: op
 
   # FlyingAllowed
