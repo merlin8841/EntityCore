@@ -3,6 +3,7 @@ package com.entitycore.modules.extendedanvil;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -14,6 +15,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public final class ExtendedAnvilGui {
 
@@ -196,6 +198,13 @@ public final class ExtendedAnvilGui {
 
         top.setItem(SLOT_PREVIEW_ITEM, preview);
         player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+
+        // ✅ Prior-work penalty visibility in debug (preview)
+        if (config.debug()) {
+            plugin.getLogger().info("[ExtendedAnvil][DEBUG] Preview ok for " + player.getName()
+                + " cost=" + pr.costLevels + " return=" + pr.returnLevels + " net=" + pr.netLevels);
+            logPriorWork(plugin, service, pr.resultItem, "Preview prior-work");
+        }
     }
 
     private static void doCommit(Player player, Inventory top, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
@@ -263,13 +272,14 @@ public final class ExtendedAnvilGui {
             player.sendMessage("Extended Anvil: Cost " + pr.costLevels + " levels, Return " + pr.returnLevels + " levels (Net 0).");
         }
 
-        // ✅ Debug safety log
+        // ✅ Debug safety log + prior-work penalty visibility (commit)
         if (config.debug()) {
             plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit ok for " + player.getName()
                 + " cost=" + pr.costLevels
                 + " return=" + pr.returnLevels
                 + " net=" + pr.netLevels
                 + " booksOut=" + pr.outBooks.size());
+            logPriorWork(plugin, service, pr.resultItem, "Commit prior-work");
         }
 
         // Refresh preview after commit
@@ -279,12 +289,12 @@ public final class ExtendedAnvilGui {
     /**
      * Simulate left-to-right operations:
      * - BOOK: disenchant (1 => all, 2+ => one by priority), consumes 1 book each step
-     * - ENCHANTED_BOOK or ITEM: merge enchants (keep higher, no upgrading), conflicts blocked
+     * - ENCHANTED_BOOK or enchant-bearing item: merge enchants (keep higher, no upgrading), conflicts blocked
      * - MATERIAL: repair with material
      * - SAME ITEM: repair + merge enchants (no upgrading)
      *
      * IMPORTANT: To get correct scaling (prior-work penalty) during a queue preview,
-     * we must mutate the working clone's PDC counts as we apply steps.
+     * we must carry forward the working clone (with its mutated PDC) after each step.
      */
     private static PreviewResult simulate(Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
         ItemStack base = top.getItem(SLOT_TARGET);
@@ -312,7 +322,7 @@ public final class ExtendedAnvilGui {
                     return PreviewResult.fail(dr.error() == null ? "Disenchant failed." : dr.error());
                 }
 
-                working = dr.newItem();
+                working = dr.newItem(); // carry forward mutated PDC
                 ret += dr.returnLevels();
                 consumes.add(new Consume(slot, 1));
                 outBooks.addAll(dr.outBooks());
@@ -320,10 +330,13 @@ public final class ExtendedAnvilGui {
             }
 
             // Repair with same item
-            if (op.getType() == working.getType() && op.getType() != Material.ENCHANTED_BOOK && service.isDamageable(working)) {
+            if (op.getType() == working.getType()
+                && op.getType() != Material.ENCHANTED_BOOK
+                && service.isDamageable(working)) {
+
                 ExtendedAnvilService.RepairResult rr = service.repairWithSameItem(working, op);
                 if (rr.ok() && rr.newItem() != null) {
-                    working = rr.newItem();
+                    working = rr.newItem(); // carry forward
                     cost += service.computeRepairCostLevels(working);
                     service.incrementRepairCount(working);
                     consumes.add(new Consume(slot, 1));
@@ -335,7 +348,7 @@ public final class ExtendedAnvilGui {
             if (service.isDamageable(working)) {
                 ExtendedAnvilService.RepairResult rr = service.repairWithMaterial(working, op);
                 if (rr.ok() && rr.newItem() != null && rr.amountConsumed() > 0) {
-                    working = rr.newItem();
+                    working = rr.newItem(); // carry forward
                     cost += service.computeRepairCostLevels(working);
                     service.incrementRepairCount(working);
                     consumes.add(new Consume(slot, rr.amountConsumed()));
@@ -343,13 +356,26 @@ public final class ExtendedAnvilGui {
                 }
             }
 
-            // Enchant merge (book or enchant-bearing item)
-            if (op.getType() == Material.ENCHANTED_BOOK || op.getType() == working.getType() || op.getItemMeta() != null) {
+            // Enchant merge:
+            // - enchanted book OR item that actually has enchants
+            // - (or same-type non-damageable tools/armor where enchants live on item meta)
+            boolean opHasEnchants = false;
+            ItemMeta opMeta = op.getItemMeta();
+            if (opMeta != null) {
+                Map<Enchantment, Integer> ench = opMeta.getEnchants();
+                opHasEnchants = ench != null && !ench.isEmpty();
+            }
+
+            if (op.getType() == Material.ENCHANTED_BOOK
+                || opHasEnchants
+                || (op.getType() == working.getType() && !service.isDamageable(working))) {
+
                 ExtendedAnvilService.MergeResult mr = service.mergeInto(working, op);
                 if (!mr.ok() || mr.newItem() == null) {
                     return PreviewResult.fail(mr.error() == null ? "Enchant merge failed." : mr.error());
                 }
-                working = mr.newItem();
+
+                working = mr.newItem(); // carry forward mutated PDC
                 cost += mr.costLevels();
                 consumes.add(new Consume(slot, 1));
                 continue;
@@ -360,6 +386,61 @@ public final class ExtendedAnvilGui {
 
         int net = cost - ret;
         return PreviewResult.ok(working, cost, ret, net, consumes, outBooks);
+    }
+
+    /**
+     * Debug helper: show the current PDC-based “prior work penalty” counters
+     * for every enchant currently present on the item (plus repairCount).
+     */
+    private static void logPriorWork(JavaPlugin plugin, ExtendedAnvilService service, ItemStack item, String label) {
+        if (plugin == null || service == null || item == null) return;
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) return;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("[ExtendedAnvil][DEBUG] ").append(label)
+          .append(" type=").append(item.getType().name());
+
+        // repair count (if present)
+        try {
+            int repairs = service.getRepairCount(item);
+            sb.append(" repairs=").append(repairs);
+        } catch (Throwable ignored) {
+            // if method absent in some older build, ignore
+        }
+
+        Map<Enchantment, Integer> enchants = meta.getEnchants();
+        if (enchants == null || enchants.isEmpty()) {
+            sb.append(" enchants=none");
+            plugin.getLogger().info(sb.toString());
+            return;
+        }
+
+        sb.append(" enchants=[");
+        boolean first = true;
+        for (Map.Entry<Enchantment, Integer> e : enchants.entrySet()) {
+            Enchantment ench = e.getKey();
+            Integer lvl = e.getValue();
+            if (ench == null) continue;
+
+            int add = 0;
+            int rem = 0;
+            try { add = service.getAddCount(item, ench); } catch (Throwable ignored) {}
+            try { rem = service.getRemoveCount(item, ench); } catch (Throwable ignored) {}
+
+            if (!first) sb.append(", ");
+            first = false;
+
+            String key = ench.getKey() != null ? ench.getKey().toString() : ench.getName();
+            sb.append(key)
+              .append(":lvl=").append(lvl == null ? 0 : lvl)
+              .append(",add=").append(add)
+              .append(",rem=").append(rem);
+        }
+        sb.append("]");
+
+        plugin.getLogger().info(sb.toString());
     }
 
     private static ItemStack named(Material mat, String name) {
