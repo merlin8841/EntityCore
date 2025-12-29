@@ -49,6 +49,7 @@ public final class ExtendedAnvilService {
 
         int cap = config.capFor(ench);
         int level = Math.min(levelToApply, cap);
+        if (level <= 0) return 0;
 
         int base = config.enchantBaseCostPerLevel();
         int mult = config.enchantAddCountMultiplier();
@@ -110,28 +111,32 @@ public final class ExtendedAnvilService {
             int addLevel = e.getValue() == null ? 0 : e.getValue();
             if (ench == null || addLevel <= 0) continue;
 
-            // conflict check vs existing
+            // conflict check vs existing (block this enchant only)
+            boolean conflict = false;
             for (Enchantment existing : outMeta.getEnchants().keySet()) {
                 if (existing == null) continue;
                 if (existing.conflictsWith(ench) || ench.conflictsWith(existing)) {
-                    // skip conflicting enchant
-                    addLevel = 0;
+                    conflict = true;
                     break;
                 }
             }
-            if (addLevel <= 0) continue;
+            if (conflict) continue;
 
             int cap = config.capFor(ench);
             int clamped = Math.min(addLevel, cap);
+            if (clamped <= 0) continue;
 
             int current = outMeta.getEnchantLevel(ench);
             int resultLevel = Math.max(current, clamped); // IMPORTANT: never +1 combine
-
             if (resultLevel <= 0) continue;
 
             if (resultLevel != current) {
+                // Cost MUST be computed from the current working item (out),
+                // otherwise addCount never scales correctly.
+                totalCost += computeEnchantCost(out, ench, resultLevel);
+
                 outMeta.addEnchant(ench, resultLevel, true);
-                totalCost += computeEnchantCost(base, ench, resultLevel);
+
                 incrementAddCount(out, ench);
                 changed = true;
             }
@@ -150,11 +155,15 @@ public final class ExtendedAnvilService {
 
         if (bookCount == 1) {
             DisenchantResult r = disenchantAllToOneBook(base, new ItemStack(Material.BOOK));
-            if (!r.ok() || r.newItem() == null || r.outBook() == null) return DisenchantOpResult.fail(r.error() == null ? "Disenchant failed." : r.error());
+            if (!r.ok() || r.newItem() == null || r.outBook() == null) {
+                return DisenchantOpResult.fail(r.error() == null ? "Disenchant failed." : r.error());
+            }
             return DisenchantOpResult.ok(r.newItem(), List.of(r.outBook()), r.returnLevels(), 1);
         } else {
             DisenchantResult r = disenchantOneByPriority(base, bookCount, priority);
-            if (!r.ok() || r.newItem() == null || r.outBook() == null) return DisenchantOpResult.fail(r.error() == null ? "Disenchant failed." : r.error());
+            if (!r.ok() || r.newItem() == null || r.outBook() == null) {
+                return DisenchantOpResult.fail(r.error() == null ? "Disenchant failed." : r.error());
+            }
             return DisenchantOpResult.ok(r.newItem(), List.of(r.outBook()), r.returnLevels(), 1);
         }
     }
