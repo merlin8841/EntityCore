@@ -1,12 +1,14 @@
 package com.entitycore.modules.provenance;
 
 import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
 import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.server.ServerCommandEvent;
@@ -26,6 +28,43 @@ public final class ProvenanceListener implements Listener {
         this.plugin = plugin;
         this.config = config;
         this.service = service;
+    }
+
+    // ---------
+    // CREATIVE tagging (pulling items from creative menu)
+    // ---------
+
+    @EventHandler(ignoreCancelled = true)
+    public void onCreative(InventoryCreativeEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (player.getGameMode() != GameMode.CREATIVE) return;
+
+        // IMPORTANT:
+        // Only tag when the click is NOT inside the player's own inventory.
+        // This prevents falsely tagging natural items just because the player rearranged stacks in creative.
+        Inventory clicked = event.getClickedInventory();
+        if (clicked == null) return;
+        if (clicked.equals(player.getInventory())) return;
+
+        // Item being placed onto the cursor from the creative menu
+        ItemStack cursor = event.getCursor();
+        if (cursor != null && cursor.getType() != Material.AIR && !service.isUnnatural(cursor)) {
+            event.setCursor(service.tagUnnatural(cursor, "creative", null));
+            if (config.debug()) {
+                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE cursor item for " + player.getName()
+                        + " item=" + cursor.getType() + " x" + cursor.getAmount());
+            }
+        }
+
+        // Some creative interactions affect current item as well; keep it safe.
+        ItemStack current = event.getCurrentItem();
+        if (current != null && current.getType() != Material.AIR && !service.isUnnatural(current)) {
+            event.setCurrentItem(service.tagUnnatural(current, "creative", null));
+            if (config.debug()) {
+                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE current item for " + player.getName()
+                        + " item=" + current.getType() + " x" + current.getAmount());
+            }
+        }
     }
 
     // ---------
@@ -50,39 +89,42 @@ public final class ProvenanceListener implements Listener {
         String msg = raw.startsWith("/") ? raw.substring(1) : raw;
         String lower = msg.toLowerCase(Locale.ROOT).trim();
 
-        // We only care about:
-        // - give / minecraft:give
-        // - item / minecraft:item (we’ll treat “item give” similarly)
         boolean isGive = lower.startsWith("give ") || lower.startsWith("minecraft:give ");
         boolean isItem = lower.startsWith("item ") || lower.startsWith("minecraft:item ");
-
         if (!isGive && !isItem) return;
 
         // Only tag if sender is an operator OR has explicit permission
         boolean allowed = (sender instanceof Player p && (p.isOp() || p.hasPermission("entitycore.provenance.hook")))
-            || (!(sender instanceof Player)); // console allowed
+                || (!(sender instanceof Player)); // console allowed
         if (!allowed) return;
 
-        // Tokenize
-        String[] parts = msg.split("\\s+");
-        if (parts.length < 2) return;
+        // Tokenize with quote support (Bedrock sometimes uses quotes)
+        List<String> parts = tokenize(msg);
+        if (parts.size() < 2) return;
+
+        String targetToken;
 
         // /give <targets> <item> [count...]
         // /item give <targets> <item> [count...]
-        String targetToken;
         if (isGive) {
-            if (parts.length < 3) return;
-            targetToken = parts[1];
+            if (parts.size() < 3) return;
+            targetToken = parts.get(1);
         } else {
-            // item ...
-            if (parts.length < 4) return;
-            String sub = parts[1].toLowerCase(Locale.ROOT);
-            if (!sub.equals("give")) return; // we only hook item give
-            targetToken = parts[2];
+            if (parts.size() < 4) return;
+            String sub = parts.get(1).toLowerCase(Locale.ROOT);
+            if (!sub.equals("give")) return;
+            targetToken = parts.get(2);
         }
 
-        List<Player> targets = service.resolvePlayers(sender, targetToken);
-        if (targets.isEmpty()) return;
+        targetToken = stripQuotes(targetToken);
+
+        List<Player> targets = resolveTargetsSmart(sender, targetToken);
+        if (targets.isEmpty()) {
+            if (config.debug()) {
+                plugin.getLogger().warning("[Provenance][DEBUG] Could not resolve targets for token='" + targetToken + "' raw='" + msg + "'");
+            }
+            return;
+        }
 
         // Snapshot inventories now; then rescan next tick after command applies
         Map<UUID, ItemStack[]> before = new HashMap<>();
@@ -91,7 +133,9 @@ public final class ProvenanceListener implements Listener {
         }
 
         String source = isGive ? "command:/give" : "command:/item";
-        Bukkit.getScheduler().runTask(plugin, () -> {
+
+        // Delay 1 tick to ensure the command has applied inventory changes.
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
             for (Player t : targets) {
                 ItemStack[] pre = before.get(t.getUniqueId());
                 if (pre == null) continue;
@@ -100,9 +144,80 @@ public final class ProvenanceListener implements Listener {
 
             if (config.debug()) {
                 plugin.getLogger().info("[Provenance][DEBUG] Tagged give-like command by " + sender.getName()
-                    + " -> targets=" + targets.size() + " source=" + source);
+                        + " -> targets=" + targets.size()
+                        + " token=" + targetToken
+                        + " source=" + source);
             }
-        });
+        }, 1L);
+    }
+
+    private List<Player> resolveTargetsSmart(CommandSender sender, String token) {
+        if (token == null || token.isEmpty()) return List.of();
+
+        if (token.equalsIgnoreCase("@s") && sender instanceof Player p) return List.of(p);
+
+        List<Player> out = service.resolvePlayers(sender, token);
+        if (!out.isEmpty()) return out;
+
+        String stripped = stripQuotes(token);
+        Player exact = Bukkit.getPlayerExact(stripped);
+        if (exact != null) return List.of(exact);
+
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p.getName().equalsIgnoreCase(stripped)) return List.of(p);
+        }
+
+        return List.of();
+    }
+
+    private static String stripQuotes(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        if ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'"))) {
+            return t.substring(1, t.length() - 1);
+        }
+        return t;
+    }
+
+    private static List<String> tokenize(String input) {
+        List<String> out = new ArrayList<>();
+        if (input == null || input.isEmpty()) return out;
+
+        StringBuilder cur = new StringBuilder();
+        boolean inQuotes = false;
+        char quoteChar = 0;
+
+        for (int i = 0; i < input.length(); i++) {
+            char c = input.charAt(i);
+
+            if (inQuotes) {
+                if (c == quoteChar) {
+                    inQuotes = false;
+                } else {
+                    cur.append(c);
+                }
+                continue;
+            }
+
+            if (c == '"' || c == '\'') {
+                inQuotes = true;
+                quoteChar = c;
+                continue;
+            }
+
+            if (Character.isWhitespace(c)) {
+                if (!cur.isEmpty()) {
+                    out.add(cur.toString());
+                    cur.setLength(0);
+                }
+                continue;
+            }
+
+            cur.append(c);
+        }
+
+        if (!cur.isEmpty()) out.add(cur.toString());
+        return out;
     }
 
     private static ItemStack[] cloneContents(ItemStack[] src) {
@@ -127,7 +242,6 @@ public final class ProvenanceListener implements Listener {
 
             if (post == null || post.getType() == Material.AIR) continue;
 
-            // If slot was empty before -> whole stack is new -> tag whole stack (unless already tagged)
             if (pre == null || pre.getType() == Material.AIR) {
                 if (!service.isUnnatural(post)) {
                     inv.setItem(slot, service.tagUnnatural(post, source, null));
@@ -135,15 +249,12 @@ public final class ProvenanceListener implements Listener {
                 continue;
             }
 
-            // Same material and similar meta?
             if (pre.isSimilar(post)) {
                 int delta = post.getAmount() - pre.getAmount();
                 if (delta <= 0) continue;
 
-                // If post already tagged unnatural, keep as-is
                 if (service.isUnnatural(post)) continue;
 
-                // Split: restore original natural stack amount, and create new tagged stack for delta
                 ItemStack restored = pre.clone();
                 restored.setAmount(pre.getAmount());
                 inv.setItem(slot, restored);
@@ -159,7 +270,6 @@ public final class ProvenanceListener implements Listener {
                 continue;
             }
 
-            // Slot changed to a different item -> tag the new item if not already tagged
             if (!service.isUnnatural(post)) {
                 inv.setItem(slot, service.tagUnnatural(post, source, null));
             }
@@ -189,9 +299,9 @@ public final class ProvenanceListener implements Listener {
         String src = service.getSource(it);
         UUID stamp = service.getStamp(it);
         service.alertOps("§c[Provenance] Blocked UNNATURAL item into shop inventory: "
-            + it.getType() + " x" + it.getAmount()
-            + " source=" + (src == null ? "?" : src)
-            + " stamp=" + (stamp == null ? "?" : stamp));
+                + it.getType() + " x" + it.getAmount()
+                + " source=" + (src == null ? "?" : src)
+                + " stamp=" + (stamp == null ? "?" : stamp));
     }
 
     @EventHandler
@@ -209,25 +319,21 @@ public final class ProvenanceListener implements Listener {
             event.setCancelled(true);
             player.sendMessage("That item cannot be sold (unnatural).");
 
-            String src = service.getSource(service.isUnnatural(cursor) ? cursor : current);
-            UUID stamp = service.getStamp(service.isUnnatural(cursor) ? cursor : current);
+            ItemStack bad = service.isUnnatural(cursor) ? cursor : current;
+
+            String src = service.getSource(bad);
+            UUID stamp = service.getStamp(bad);
 
             service.alertOps("§c[Provenance] " + player.getName() + " attempted to sell UNNATURAL item: "
-                + (service.isUnnatural(cursor) ? cursor.getType() : current.getType())
-                + " source=" + (src == null ? "?" : src)
-                + " stamp=" + (stamp == null ? "?" : stamp));
+                    + bad.getType()
+                    + " source=" + (src == null ? "?" : src)
+                    + " stamp=" + (stamp == null ? "?" : stamp));
         }
     }
 
     private boolean isShopInventory(Inventory inv) {
         if (inv == null) return false;
 
-        String title = "";
-        try {
-            title = Bukkit.getServer().getItemFactory() != null ? "" : "";
-        } catch (Throwable ignored) {}
-
-        // safer: use view title via click event normally; here we rely on holder class and fallback titles list
         Object holder = inv.getHolder();
         String holderName = holder == null ? "" : holder.getClass().getName().toLowerCase(Locale.ROOT);
 
@@ -236,8 +342,6 @@ public final class ProvenanceListener implements Listener {
             if (holderName.contains(s.toLowerCase(Locale.ROOT))) return true;
         }
 
-        // title-based check is best inside click event; for move event we can’t read view title reliably.
-        // We still keep a weak fallback on holder name only here.
         return false;
     }
 }
