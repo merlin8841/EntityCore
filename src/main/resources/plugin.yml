@@ -24,6 +24,11 @@ commands:
     description: Opens the Extended Anvil admin GUI (Operator only)
     usage: /eaadmin
 
+  infect:
+    description: Opens Infection operator GUI (and seed controls)
+    usage: /infect
+    aliases: [infection]
+
 permissions:
   entitycore.hopperfilters.use:
     description: Allows using hopper filters
@@ -37,6 +42,11 @@ permissions:
     default: true
   entitycore.extendedanvil.admin:
     description: Operator-only Extended Anvil settings
+    default: op
+
+  # Infection (Operator-only)
+  entitycore.infection.admin:
+    description: Operator-only Infection controls (GUI, toggle, seed item)
     default: op
 
   # FlyingAllowed
