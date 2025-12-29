@@ -23,6 +23,11 @@ public final class ExtendedAnvilCostsGui {
     private static final int SLOT_RET_SECOND = 16;
     private static final int SLOT_RET_THIRD = 18;
 
+    // Repair settings (new)
+    private static final int SLOT_REPAIR_BASE_LEVELS = 19;
+    private static final int SLOT_REPAIR_BASE_MULT = 20;
+    private static final int SLOT_REPAIR_INC = 21;
+
     private static final int SLOT_BACK = 22;
 
     private ExtendedAnvilCostsGui() {}
@@ -51,6 +56,15 @@ public final class ExtendedAnvilCostsGui {
 
         inv.setItem(SLOT_RET_THIRD, lore(Material.REDSTONE, "Disenchant return % (third+ same enchant)",
             List.of("Value: " + pct(config.thirdPlusSameEnchantReturnPercent()), "Left +0.05, Right -0.05")));
+
+        inv.setItem(SLOT_REPAIR_BASE_LEVELS, lore(Material.IRON_INGOT, "Repair base levels",
+            List.of("Value: " + config.repairBaseLevels(), "Cost = ceil(baseLevels * multiplier)", "Left +1, Right -1, Shift +10/-10")));
+
+        inv.setItem(SLOT_REPAIR_BASE_MULT, lore(Material.ANVIL, "Repair base multiplier",
+            List.of("Value: " + trim(config.repairBaseMultiplier()), "multiplier = base + (repairs * inc)", "Left +0.5, Right -0.5")));
+
+        inv.setItem(SLOT_REPAIR_INC, lore(Material.REDSTONE, "Repair increment per repair",
+            List.of("Value: " + trim(config.repairIncrementPerRepair()), "multiplier += inc each repair", "Left +0.5, Right -0.5")));
 
         inv.setItem(SLOT_BACK, named(Material.ARROW, "Back"));
     }
@@ -100,7 +114,7 @@ public final class ExtendedAnvilCostsGui {
         }
 
         if (slot == SLOT_RET_FIRST) {
-            config.setFirstReturnPercent(bump(config.firstReturnPercent(), left, right));
+            config.setFirstReturnPercent(bumpPct(config.firstReturnPercent(), left, right));
             config.save();
             build(event.getInventory(), config);
             click(player);
@@ -108,7 +122,7 @@ public final class ExtendedAnvilCostsGui {
         }
 
         if (slot == SLOT_RET_SECOND) {
-            config.setSecondSameEnchantReturnPercent(bump(config.secondSameEnchantReturnPercent(), left, right));
+            config.setSecondSameEnchantReturnPercent(bumpPct(config.secondSameEnchantReturnPercent(), left, right));
             config.save();
             build(event.getInventory(), config);
             click(player);
@@ -116,14 +130,51 @@ public final class ExtendedAnvilCostsGui {
         }
 
         if (slot == SLOT_RET_THIRD) {
-            config.setThirdPlusSameEnchantReturnPercent(bump(config.thirdPlusSameEnchantReturnPercent(), left, right));
+            config.setThirdPlusSameEnchantReturnPercent(bumpPct(config.thirdPlusSameEnchantReturnPercent(), left, right));
             config.save();
             build(event.getInventory(), config);
             click(player);
+            return;
+        }
+
+        if (slot == SLOT_REPAIR_BASE_LEVELS) {
+            int delta = shift ? 10 : 1;
+            int v = config.repairBaseLevels();
+            if (left) v += delta;
+            if (right) v -= delta;
+            config.setRepairBaseLevels(v);
+            config.save();
+            build(event.getInventory(), config);
+            click(player);
+            return;
+        }
+
+        if (slot == SLOT_REPAIR_BASE_MULT) {
+            double v = config.repairBaseMultiplier();
+            if (left) v += 0.5;
+            if (right) v -= 0.5;
+            if (v < 0) v = 0;
+            config.setRepairBaseMultiplier(v);
+            config.save();
+            build(event.getInventory(), config);
+            click(player);
+            return;
+        }
+
+        if (slot == SLOT_REPAIR_INC) {
+            double v = config.repairIncrementPerRepair();
+            if (left) v += 0.5;
+            if (right) v -= 0.5;
+            if (v < 0) v = 0;
+            config.setRepairIncrementPerRepair(v);
+            config.save();
+            build(event.getInventory(), config);
+            click(player);
+            return;
         }
     }
 
-    private static double bump(double v, boolean left, boolean right) {
+    private static double bumpPct(double v, boolean left, boolean right) {
         if (left) v += 0.05;
         if (right) v -= 0.05;
         if (v < 0) v = 0;
@@ -137,6 +188,12 @@ public final class ExtendedAnvilCostsGui {
 
     private static String pct(double v) {
         return Math.round(v * 100.0) + "%";
+    }
+
+    private static String trim(double v) {
+        // simple pretty formatting for 0.5 steps
+        if (Math.abs(v - Math.round(v)) < 1e-9) return String.valueOf((int) Math.round(v));
+        return String.valueOf(v);
     }
 
     private static ItemStack named(Material mat, String name) {
