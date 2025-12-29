@@ -19,20 +19,26 @@ public final class ExtendedAnvilPriorityGui {
     public static final String TITLE = "EA Disenchant Priority";
 
     private static final int SIZE = 54;
-    private static final int SLOT_BACK = 49;
-    private static final int SLOT_PAGE = 48;
+
     private static final int SLOT_PREV = 45;
     private static final int SLOT_NEXT = 53;
+    private static final int SLOT_PAGE = 48;
+    private static final int SLOT_BACK = 49;
+
+    // Touch controls
+    private static final int SLOT_MODE_PAPER = 52;
+    private static final int SLOT_MOVE_UP = 50;
+    private static final int SLOT_MOVE_DOWN = 51;
 
     private ExtendedAnvilPriorityGui() {}
 
     public static void open(Player player, JavaPlugin plugin, ExtendedAnvilConfig config) {
         Inventory inv = Bukkit.createInventory(new ExtendedAnvilAdminGui.Holder(player), SIZE, TITLE);
-        build(inv, config, 0);
+        build(inv, config, 0, "UP");
         player.openInventory(inv);
     }
 
-    private static void build(Inventory inv, ExtendedAnvilConfig config, int page) {
+    private static void build(Inventory inv, ExtendedAnvilConfig config, int page, String mode) {
         ItemStack filler = named(Material.GRAY_STAINED_GLASS_PANE, " ");
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
@@ -46,12 +52,10 @@ public final class ExtendedAnvilPriorityGui {
             Enchantment ench = list.get(i);
             int slot = i - start;
 
-            ItemStack it = lore(Material.HOPPER,
+            // Use enchanted book placeholders (touch-friendly + consistent with caps gui)
+            ItemStack it = lore(Material.ENCHANTED_BOOK,
                 (i + 1) + ". " + ench.getKey(),
-                List.of(
-                    "Left click: move UP",
-                    "Right click: move DOWN"
-                )
+                List.of("Tap to move " + (mode.equals("UP") ? "UP" : "DOWN"))
             );
             inv.setItem(slot, it);
         }
@@ -60,6 +64,10 @@ public final class ExtendedAnvilPriorityGui {
         inv.setItem(SLOT_NEXT, named(Material.ARROW, "Next Page"));
         inv.setItem(SLOT_BACK, named(Material.ARROW, "Back"));
         inv.setItem(SLOT_PAGE, lore(Material.PAPER, "Page", List.of(String.valueOf(page))));
+
+        inv.setItem(SLOT_MOVE_UP, named(Material.LIME_DYE, "Mode: Move UP"));
+        inv.setItem(SLOT_MOVE_DOWN, named(Material.RED_DYE, "Mode: Move DOWN"));
+        inv.setItem(SLOT_MODE_PAPER, lore(Material.PAPER, "Current Mode", List.of(mode)));
     }
 
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
@@ -72,7 +80,9 @@ public final class ExtendedAnvilPriorityGui {
 
         event.setCancelled(true);
 
-        int page = readPage(event.getView().getTopInventory());
+        Inventory top = event.getView().getTopInventory();
+        int page = readPage(top);
+        String mode = readMode(top);
         int slot = event.getRawSlot();
 
         if (slot == SLOT_BACK) {
@@ -83,14 +93,26 @@ public final class ExtendedAnvilPriorityGui {
 
         if (slot == SLOT_PREV) {
             page = Math.max(0, page - 1);
-            build(event.getInventory(), config, page);
+            build(top, config, page, mode);
             click(player);
             return;
         }
 
         if (slot == SLOT_NEXT) {
             page = page + 1;
-            build(event.getInventory(), config, page);
+            build(top, config, page, mode);
+            click(player);
+            return;
+        }
+
+        if (slot == SLOT_MOVE_UP) {
+            build(top, config, page, "UP");
+            click(player);
+            return;
+        }
+
+        if (slot == SLOT_MOVE_DOWN) {
+            build(top, config, page, "DOWN");
             click(player);
             return;
         }
@@ -101,13 +123,13 @@ public final class ExtendedAnvilPriorityGui {
             int index = page * 45 + slot;
             if (index < 0 || index >= list.size()) return;
 
-            if (event.isLeftClick()) {
+            if (mode.equals("UP")) {
                 if (index > 0) {
                     Enchantment tmp = list.get(index - 1);
                     list.set(index - 1, list.get(index));
                     list.set(index, tmp);
                 }
-            } else if (event.isRightClick()) {
+            } else {
                 if (index < list.size() - 1) {
                     Enchantment tmp = list.get(index + 1);
                     list.set(index + 1, list.get(index));
@@ -117,7 +139,7 @@ public final class ExtendedAnvilPriorityGui {
 
             config.setPriorityList(list);
             config.save();
-            build(event.getInventory(), config, page);
+            build(top, config, page, mode);
             click(player);
         }
     }
@@ -132,6 +154,15 @@ public final class ExtendedAnvilPriorityGui {
         } catch (Exception ignored) {
             return 0;
         }
+    }
+
+    private static String readMode(Inventory inv) {
+        ItemStack paper = inv.getItem(SLOT_MODE_PAPER);
+        if (paper == null) return "UP";
+        ItemMeta meta = paper.getItemMeta();
+        if (meta == null || meta.getLore() == null || meta.getLore().isEmpty()) return "UP";
+        String m = meta.getLore().get(0);
+        return (m != null && (m.equalsIgnoreCase("DOWN") || m.equalsIgnoreCase("UP"))) ? m.toUpperCase() : "UP";
     }
 
     private static void click(Player p) {
