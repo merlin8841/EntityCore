@@ -5,6 +5,7 @@ import com.entitycore.modules.extendedanvil.ExtendedAnvilGuiModule;
 import com.entitycore.modules.flyingallowed.FlyingAllowedModule;
 import com.entitycore.modules.flyingallowed.FlyingAllowedWorldGuardBridge;
 import com.entitycore.modules.hoppers.HopperFiltersModule;
+import com.entitycore.modules.infection.InfectionModule;
 import org.bukkit.plugin.java.JavaPlugin;
 
 public final class EntityCore extends JavaPlugin {
@@ -24,6 +25,9 @@ public final class EntityCore extends JavaPlugin {
         // Register modules here (manual registration by design)
         moduleManager.register(new HopperFiltersModule());
         moduleManager.register(new ExtendedAnvilGuiModule());
+
+        // Infection (Operator-only)
+        moduleManager.register(new InfectionModule());
 
         // FlyingAllowed (WorldGuard-driven flight control)
         moduleManager.register(new FlyingAllowedModule());
