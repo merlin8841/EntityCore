@@ -4,38 +4,31 @@ import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
 import org.bukkit.entity.Player;
-import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
-import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.*;
 import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.StringJoiner;
 
 public final class ExtendedAnvilGui {
 
-    // Single chest (Bedrock-friendly)
-    private static final int SIZE = 27;
-    private static final String TITLE = "Extended Anvil";
+    private static final int SIZE = 54;
 
-    // Slot mapping per your spec:
-    // Slot 2 => index 1
-    private static final int SLOT_TARGET = 1;
+    private static final int SLOT_ENCHANT_ITEM = 20;
+    private static final int SLOT_ENCHANT_BOOK = 22;
+    private static final int SLOT_ENCHANT_RESULT = 24;
+    private static final int SLOT_ENCHANT_APPLY = 29;
 
-    // Slots 9-16 => indices 8..15 (left -> right processing queue)
-    private static final int WORK_START = 8;
-    private static final int WORK_END = 15;
+    private static final int SLOT_DISENCHANT_ITEM = 38;
+    private static final int SLOT_DISENCHANT_BOOKS = 40;
+    private static final int SLOT_DISENCHANT_RESULT = 42;
+    private static final int SLOT_DISENCHANT_APPLY = 47;
 
-    // Preview display
-    private static final int SLOT_PREVIEW_ITEM = 4;
-
-    // Buttons
-    private static final int SLOT_PREVIEW = 24;
-    private static final int SLOT_COMMIT = 25;
-    private static final int SLOT_CLOSE = 26;
+    private static final int SLOT_CLOSE = 49;
 
     private ExtendedAnvilGui() {}
 
@@ -63,7 +56,7 @@ public final class ExtendedAnvilGui {
 
     public static void open(Player player, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
         Holder holder = new Holder(player);
-        Inventory inv = Bukkit.createInventory(holder, SIZE, TITLE);
+        Inventory inv = Bukkit.createInventory(holder, SIZE, "Extended Anvil");
         holder.setInventory(inv);
 
         build(inv);
@@ -79,19 +72,20 @@ public final class ExtendedAnvilGui {
         ItemStack filler = named(Material.GRAY_STAINED_GLASS_PANE, " ");
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
-        // Inputs
-        inv.setItem(SLOT_TARGET, null);
-        for (int i = WORK_START; i <= WORK_END; i++) inv.setItem(i, null);
+        inv.setItem(SLOT_ENCHANT_ITEM, null);
+        inv.setItem(SLOT_ENCHANT_BOOK, null);
+        inv.setItem(SLOT_ENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
+        inv.setItem(SLOT_ENCHANT_APPLY, named(Material.ANVIL, "Apply Enchant"));
 
-        // Labels / preview
-        inv.setItem(0, named(Material.ANVIL, "Target Item (Slot 2)"));
-        inv.setItem(7, named(Material.BOOKSHELF, "Queue (Slots 9-16)"));
-        inv.setItem(SLOT_PREVIEW_ITEM, named(Material.BLACK_STAINED_GLASS_PANE, "Preview"));
+        inv.setItem(SLOT_DISENCHANT_ITEM, null);
+        inv.setItem(SLOT_DISENCHANT_BOOKS, null);
+        inv.setItem(SLOT_DISENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
+        inv.setItem(SLOT_DISENCHANT_APPLY, named(Material.GRINDSTONE, "Disenchant"));
 
-        // Buttons
-        inv.setItem(SLOT_PREVIEW, named(Material.SPYGLASS, "Preview"));
-        inv.setItem(SLOT_COMMIT, named(Material.LIME_CONCRETE, "Commit"));
         inv.setItem(SLOT_CLOSE, named(Material.BARRIER, "Close"));
+
+        inv.setItem(11, named(Material.ENCHANTING_TABLE, "Enchanting"));
+        inv.setItem(33, named(Material.BOOKSHELF, "Disenchanting"));
     }
 
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
@@ -102,12 +96,15 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        Inventory top = event.getView().getTopInventory();
         int rawSlot = event.getRawSlot();
+        Inventory top = event.getView().getTopInventory();
 
-        // Block interaction with non-input slots in top inventory
         if (rawSlot < top.getSize()) {
-            if (!isInputSlot(rawSlot) && rawSlot != SLOT_PREVIEW && rawSlot != SLOT_COMMIT && rawSlot != SLOT_CLOSE) {
+            if (rawSlot != SLOT_ENCHANT_ITEM &&
+                rawSlot != SLOT_ENCHANT_BOOK &&
+                rawSlot != SLOT_DISENCHANT_ITEM &&
+                rawSlot != SLOT_DISENCHANT_BOOKS) {
+
                 event.setCancelled(true);
             }
         }
@@ -118,21 +115,46 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        if (rawSlot == SLOT_PREVIEW) {
+        if (rawSlot == SLOT_ENCHANT_APPLY) {
             event.setCancelled(true);
-            doPreview(player, top, plugin, config, service);
+            doEnchant(player, top, plugin, config, service);
             return;
         }
 
-        if (rawSlot == SLOT_COMMIT) {
+        if (rawSlot == SLOT_DISENCHANT_APPLY) {
             event.setCancelled(true);
-            doCommit(player, top, plugin, config, service);
+            doDisenchant(player, top, plugin, config, service);
             return;
         }
 
-        // Any change to input slots -> refresh preview next tick
-        if (rawSlot < top.getSize() && isInputSlot(rawSlot)) {
-            Bukkit.getScheduler().runTask(plugin, () -> doPreview(player, top, plugin, config, service));
+        if (rawSlot == SLOT_ENCHANT_BOOK) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                ItemStack inSlot = top.getItem(SLOT_ENCHANT_BOOK);
+                if (inSlot != null && !service.isEnchantedBook(inSlot)) {
+                    top.setItem(SLOT_ENCHANT_BOOK, null);
+                    player.getInventory().addItem(inSlot);
+                    player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+                }
+                refreshPreview(player, top, config, service);
+            });
+            return;
+        }
+
+        if (rawSlot == SLOT_DISENCHANT_BOOKS) {
+            Bukkit.getScheduler().runTask(plugin, () -> {
+                ItemStack inSlot = top.getItem(SLOT_DISENCHANT_BOOKS);
+                if (inSlot != null && !service.isEmptyBook(inSlot)) {
+                    top.setItem(SLOT_DISENCHANT_BOOKS, null);
+                    player.getInventory().addItem(inSlot);
+                    player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+                }
+                refreshPreview(player, top, config, service);
+            });
+            return;
+        }
+
+        if (rawSlot < top.getSize()) {
+            Bukkit.getScheduler().runTask(plugin, () -> refreshPreview(player, top, config, service));
         }
     }
 
@@ -141,9 +163,14 @@ public final class ExtendedAnvilGui {
         if (!(top.getHolder() instanceof Holder)) return;
 
         for (int slot : event.getRawSlots()) {
-            if (slot < top.getSize() && !isInputSlot(slot)) {
-                event.setCancelled(true);
-                return;
+            if (slot < top.getSize()) {
+                if (slot != SLOT_ENCHANT_ITEM &&
+                    slot != SLOT_ENCHANT_BOOK &&
+                    slot != SLOT_DISENCHANT_ITEM &&
+                    slot != SLOT_DISENCHANT_BOOKS) {
+                    event.setCancelled(true);
+                    return;
+                }
             }
         }
     }
@@ -151,204 +178,192 @@ public final class ExtendedAnvilGui {
     public static void handleClose(Player player, InventoryCloseEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
         Inventory top = event.getInventory();
 
-        // return inputs
-        giveBack(player, top.getItem(SLOT_TARGET));
-        top.setItem(SLOT_TARGET, null);
-
-        for (int i = WORK_START; i <= WORK_END; i++) {
-            giveBack(player, top.getItem(i));
-            top.setItem(i, null);
-        }
+        giveBack(player, top.getItem(SLOT_ENCHANT_ITEM));
+        giveBack(player, top.getItem(SLOT_ENCHANT_BOOK));
+        giveBack(player, top.getItem(SLOT_DISENCHANT_ITEM));
+        giveBack(player, top.getItem(SLOT_DISENCHANT_BOOKS));
 
         if (config.debug()) {
             plugin.getLogger().info("[ExtendedAnvil][DEBUG] Closed GUI for " + player.getName());
         }
     }
 
-    private static boolean isInputSlot(int slot) {
-        if (slot == SLOT_TARGET) return true;
-        return slot >= WORK_START && slot <= WORK_END;
-    }
+    private static void refreshPreview(Player player, Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
+        ItemStack item = top.getItem(SLOT_ENCHANT_ITEM);
+        ItemStack book = top.getItem(SLOT_ENCHANT_BOOK);
 
-    private static void doPreview(Player player, Inventory top, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
-        PreviewResult pr = simulate(top, config, service);
-
-        if (!pr.ok) {
-            top.setItem(SLOT_PREVIEW_ITEM, named(Material.RED_STAINED_GLASS_PANE, pr.error == null ? "Invalid" : pr.error));
-            if (config.debug()) {
-                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Preview failed for " + player.getName() + ": " + pr.error);
-            }
-            player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 0.8f);
-            return;
-        }
-
-        ItemStack preview = pr.resultItem.clone();
-        ItemMeta meta = preview.getItemMeta();
-        if (meta != null) {
-            List<String> lore = new ArrayList<>();
-            lore.add("Net: " + (pr.netLevels >= 0 ? ("-" + pr.netLevels) : ("+" + (-pr.netLevels))) + " levels");
-            lore.add("Cost: " + pr.costLevels + " | Return: " + pr.returnLevels);
-            lore.add("Your levels: " + player.getLevel());
-            meta.setLore(lore);
-            preview.setItemMeta(meta);
-        }
-
-        top.setItem(SLOT_PREVIEW_ITEM, preview);
-        player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
-    }
-
-    private static void doCommit(Player player, Inventory top, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
-        PreviewResult pr = simulate(top, config, service);
-
-        if (!pr.ok) {
-            if (config.debug()) {
-                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit blocked for " + player.getName() + ": " + pr.error);
-            }
-            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
-            return;
-        }
-
-        int net = pr.netLevels;
-        if (net > 0 && player.getLevel() < net) {
-            if (config.debug()) {
-                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit blocked (levels) for " + player.getName() + ": need=" + net + " have=" + player.getLevel());
-            }
-            player.sendMessage("Not enough levels.");
-            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
-            return;
-        }
-
-        // Apply XP change
-        if (net > 0) player.setLevel(player.getLevel() - net);
-        if (net < 0) player.setLevel(player.getLevel() + (-net));
-
-        // Apply item result to target
-        top.setItem(SLOT_TARGET, pr.resultItem);
-
-        // Consume inputs as recorded
-        for (Consume c : pr.consumes) {
-            if (c.slot < 0 || c.slot >= top.getSize()) continue;
-            ItemStack it = top.getItem(c.slot);
-            if (it == null) continue;
-
-            if (c.amount <= 0) continue;
-
-            if (it.getAmount() <= c.amount) {
-                top.setItem(c.slot, null);
+        if (item != null && book != null && service.isEnchantedBook(book)) {
+            ExtendedAnvilService.ApplyEnchantResult r = service.applyEnchantedBook(item, book);
+            if (r.ok() && r.newItem() != null) {
+                ItemStack preview = r.newItem().clone();
+                ItemMeta meta = preview.getItemMeta();
+                if (meta != null) {
+                    meta.setLore(List.of(
+                        "Cost: " + r.costLevels() + " levels",
+                        "Your levels: " + player.getLevel()
+                    ));
+                    preview.setItemMeta(meta);
+                }
+                top.setItem(SLOT_ENCHANT_RESULT, preview);
             } else {
-                ItemStack left = it.clone();
-                left.setAmount(it.getAmount() - c.amount);
-                top.setItem(c.slot, left);
+                top.setItem(SLOT_ENCHANT_RESULT, named(Material.RED_STAINED_GLASS_PANE, r.error() == null ? "Invalid" : r.error()));
             }
+        } else {
+            top.setItem(SLOT_ENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
         }
 
-        // Give output books
-        for (ItemStack outBook : pr.outBooks) {
-            if (outBook == null) continue;
-            HashMap<Integer, ItemStack> overflow = player.getInventory().addItem(outBook);
-            for (ItemStack of : overflow.values()) {
-                player.getWorld().dropItemNaturally(player.getLocation(), of);
+        ItemStack disItem = top.getItem(SLOT_DISENCHANT_ITEM);
+        ItemStack books = top.getItem(SLOT_DISENCHANT_BOOKS);
+        int bookCount = books == null ? 0 : books.getAmount();
+
+        if (disItem != null && bookCount >= 1 && service.isEmptyBook(books)) {
+            ExtendedAnvilService.DisenchantResult r;
+            if (bookCount == 1) {
+                r = service.disenchantAllToOneBook(disItem, books);
+            } else {
+                r = service.disenchantOneByPriority(disItem, bookCount, config.priorityList());
             }
+
+            if (r.ok() && r.outBook() != null) {
+                ItemStack preview = r.outBook().clone();
+                ItemMeta meta = preview.getItemMeta();
+                if (meta != null) {
+                    meta.setLore(List.of(
+                        "Return: " + r.returnLevels() + " levels"
+                    ));
+                    preview.setItemMeta(meta);
+                }
+                top.setItem(SLOT_DISENCHANT_RESULT, preview);
+            } else {
+                top.setItem(SLOT_DISENCHANT_RESULT, named(Material.RED_STAINED_GLASS_PANE, r.error() == null ? "Invalid" : r.error()));
+            }
+        } else {
+            top.setItem(SLOT_DISENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
+        }
+    }
+
+    private static void doEnchant(Player player, Inventory top, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
+        ItemStack item = top.getItem(SLOT_ENCHANT_ITEM);
+        ItemStack book = top.getItem(SLOT_ENCHANT_BOOK);
+
+        if (item == null || book == null || !service.isEnchantedBook(book)) {
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            if (config.debug()) {
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant failed (missing item/book) player=" + player.getName());
+            }
+            return;
         }
 
-        // Sounds
+        ExtendedAnvilService.ApplyEnchantResult r = service.applyEnchantedBook(item, book);
+        if (!r.ok() || r.newItem() == null) {
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            if (config.debug()) {
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant failed player=" + player.getName()
+                    + " reason=" + (r.error() == null ? "unknown" : r.error())
+                    + " item=" + summarizeItem(item)
+                    + " book=" + summarizeItem(book));
+            }
+            return;
+        }
+
+        int cost = r.costLevels();
+        if (player.getLevel() < cost) {
+            player.sendMessage("Not enough levels. Need " + cost + " levels.");
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            if (config.debug()) {
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant blocked (insufficient levels) player=" + player.getName()
+                    + " have=" + player.getLevel() + " need=" + cost
+                    + " item=" + summarizeItem(item)
+                    + " bookEnchants=" + summarizeBookEnchants(service, book));
+            }
+            return;
+        }
+
+        player.setLevel(player.getLevel() - cost);
+
+        top.setItem(SLOT_ENCHANT_BOOK, null);
+        top.setItem(SLOT_ENCHANT_ITEM, r.newItem());
+
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 1f, 1f);
+        player.sendMessage("Enchanted item for " + cost + " levels.");
 
         if (config.debug()) {
-            plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit ok for " + player.getName()
-                + " cost=" + pr.costLevels + " return=" + pr.returnLevels + " net=" + pr.netLevels
-                + " booksOut=" + pr.outBooks.size());
+            plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant commit player=" + player.getName()
+                + " cost=" + cost
+                + " before=" + summarizeItem(item)
+                + " bookEnchants=" + summarizeBookEnchants(service, book)
+                + " after=" + summarizeItem(r.newItem()));
         }
 
-        // Refresh preview after commit
-        Bukkit.getScheduler().runTask(plugin, () -> doPreview(player, top, plugin, config, service));
+        refreshPreview(player, top, config, service);
     }
 
-    /**
-     * Simulate left-to-right operations:
-     * - ENCHANTED_BOOK: merge enchants (keep higher, no upgrading), conflicts blocked
-     * - BOOK stack: disenchant (1 => all, 2+ => one by priority), consumes 1 book each operation
-     * - MATERIAL: repair with material (consumes some)
-     * - SAME ITEM: repair + merge enchants (consumes 1)
-     */
-    private static PreviewResult simulate(Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
-        ItemStack base = top.getItem(SLOT_TARGET);
-        if (base == null || base.getType() == Material.AIR) {
-            return PreviewResult.fail("Put an item in Slot 2.");
+    private static void doDisenchant(Player player, Inventory top, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
+        ItemStack item = top.getItem(SLOT_DISENCHANT_ITEM);
+        ItemStack books = top.getItem(SLOT_DISENCHANT_BOOKS);
+
+        if (item == null || books == null || !service.isEmptyBook(books) || books.getAmount() < 1) {
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            if (config.debug()) {
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Disenchant failed (missing item/books) player=" + player.getName());
+            }
+            return;
         }
 
-        ItemStack working = base.clone();
+        int count = books.getAmount();
 
-        int cost = 0;
-        int ret = 0;
-
-        List<Consume> consumes = new ArrayList<>();
-        List<ItemStack> outBooks = new ArrayList<>();
-
-        for (int slot = WORK_START; slot <= WORK_END; slot++) {
-            ItemStack op = top.getItem(slot);
-            if (op == null || op.getType() == Material.AIR) continue;
-
-            // Disenchant via BOOK stack
-            if (op.getType() == Material.BOOK) {
-                int count = op.getAmount();
-                ExtendedAnvilService.DisenchantOpResult dr = service.disenchant(working, count, config.priorityList());
-                if (!dr.ok() || dr.newItem() == null) {
-                    return PreviewResult.fail(dr.error() == null ? "Disenchant failed." : dr.error());
-                }
-
-                working = dr.newItem();
-                ret += dr.returnLevels();
-                consumes.add(new Consume(slot, 1)); // consume 1 book per operation
-                outBooks.addAll(dr.outBooks());
-                continue;
-            }
-
-            // Enchant / merge via ENCHANTED_BOOK or ITEM (enchants only, no upgrades)
-            if (op.getType() == Material.ENCHANTED_BOOK || op.getType() != Material.AIR) {
-                // Repair with same item
-                if (op.getType() == working.getType() && op.getType() != Material.ENCHANTED_BOOK && service.isDamageable(working)) {
-                    ExtendedAnvilService.RepairResult rr = service.repairWithSameItem(working, op);
-                    if (rr.ok() && rr.newItem() != null) {
-                        working = rr.newItem();
-                        cost += service.computeRepairCostLevels(working);
-                        service.incrementRepairCount(working);
-                        consumes.add(new Consume(slot, 1));
-                        continue;
-                    }
-                }
-
-                // Repair with material
-                if (service.isDamageable(working)) {
-                    ExtendedAnvilService.RepairResult rr = service.repairWithMaterial(working, op);
-                    if (rr.ok() && rr.newItem() != null && rr.amountConsumed() > 0) {
-                        working = rr.newItem();
-                        cost += service.computeRepairCostLevels(working);
-                        service.incrementRepairCount(working);
-                        consumes.add(new Consume(slot, rr.amountConsumed()));
-                        continue;
-                    }
-                }
-
-                // Enchant merge
-                if (op.getType() == Material.ENCHANTED_BOOK || (op.getType() == working.getType() && !service.isDamageable(working))) {
-                    ExtendedAnvilService.MergeResult mr = service.mergeInto(working, op);
-                    if (!mr.ok() || mr.newItem() == null) {
-                        return PreviewResult.fail(mr.error() == null ? "Enchant merge failed." : mr.error());
-                    }
-                    working = mr.newItem();
-                    cost += mr.costLevels();
-                    consumes.add(new Consume(slot, 1));
-                    continue;
-                }
-            }
-
-            // If we get here, the item in that slot wasn't usable
-            return PreviewResult.fail("Slot " + (slot + 1) + " item can't be used.");
+        ExtendedAnvilService.DisenchantResult r;
+        if (count == 1) {
+            r = service.disenchantAllToOneBook(item, books);
+        } else {
+            r = service.disenchantOneByPriority(item, count, config.priorityList());
         }
 
-        int net = cost - ret;
-        return PreviewResult.ok(working, cost, ret, net, consumes, outBooks);
+        if (!r.ok() || r.newItem() == null || r.outBook() == null) {
+            player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
+            if (config.debug()) {
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Disenchant failed player=" + player.getName()
+                    + " reason=" + (r.error() == null ? "unknown" : r.error())
+                    + " item=" + summarizeItem(item)
+                    + " bookCount=" + count);
+            }
+            return;
+        }
+
+        int consume = r.booksConsumed();
+        int remaining = count - consume;
+        if (remaining <= 0) {
+            top.setItem(SLOT_DISENCHANT_BOOKS, null);
+        } else {
+            ItemStack newBooks = books.clone();
+            newBooks.setAmount(remaining);
+            top.setItem(SLOT_DISENCHANT_BOOKS, newBooks);
+        }
+
+        top.setItem(SLOT_DISENCHANT_ITEM, r.newItem());
+
+        HashMap<Integer, ItemStack> overflow = player.getInventory().addItem(r.outBook());
+        for (ItemStack of : overflow.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), of);
+        }
+
+        int give = r.returnLevels();
+        player.setLevel(player.getLevel() + give);
+
+        player.playSound(player.getLocation(), Sound.BLOCK_GRINDSTONE_USE, 1f, 1f);
+        player.sendMessage("Disenchanted item and gained " + give + " levels.");
+
+        if (config.debug()) {
+            plugin.getLogger().info("[ExtendedAnvil][DEBUG] Disenchant commit player=" + player.getName()
+                + " bookCount=" + count
+                + " booksConsumed=" + consume
+                + " returnLevels=" + give
+                + " before=" + summarizeItem(item)
+                + " outBook=" + summarizeItem(r.outBook())
+                + " after=" + summarizeItem(r.newItem()));
+        }
+
+        refreshPreview(player, top, config, service);
     }
 
     private static ItemStack named(Material mat, String name) {
@@ -369,36 +384,35 @@ public final class ExtendedAnvilGui {
         }
     }
 
-    private record Consume(int slot, int amount) {}
+    private static String summarizeItem(ItemStack it) {
+        if (it == null) return "null";
+        String base = it.getType().name() + " x" + it.getAmount();
+        ItemMeta meta = it.getItemMeta();
+        if (meta == null) return base;
 
-    private static final class PreviewResult {
-        final boolean ok;
-        final String error;
-        final ItemStack resultItem;
-        final int costLevels;
-        final int returnLevels;
-        final int netLevels;
-        final List<Consume> consumes;
-        final List<ItemStack> outBooks;
+        Map<org.bukkit.enchantments.Enchantment, Integer> ench = meta.getEnchants();
+        if (ench == null || ench.isEmpty()) return base;
 
-        private PreviewResult(boolean ok, String error, ItemStack resultItem, int costLevels, int returnLevels, int netLevels,
-                              List<Consume> consumes, List<ItemStack> outBooks) {
-            this.ok = ok;
-            this.error = error;
-            this.resultItem = resultItem;
-            this.costLevels = costLevels;
-            this.returnLevels = returnLevels;
-            this.netLevels = netLevels;
-            this.consumes = consumes;
-            this.outBooks = outBooks;
+        StringJoiner sj = new StringJoiner(", ");
+        for (Map.Entry<org.bukkit.enchantments.Enchantment, Integer> e : ench.entrySet()) {
+            if (e.getKey() == null || e.getKey().getKey() == null) continue;
+            sj.add(e.getKey().getKey().toString() + ":" + e.getValue());
         }
+        return base + " {" + sj + "}";
+    }
 
-        static PreviewResult ok(ItemStack result, int cost, int ret, int net, List<Consume> consumes, List<ItemStack> outBooks) {
-            return new PreviewResult(true, null, result, cost, ret, net, consumes, outBooks);
-        }
-
-        static PreviewResult fail(String error) {
-            return new PreviewResult(false, error, null, 0, 0, 0, List.of(), List.of());
+    private static String summarizeBookEnchants(ExtendedAnvilService service, ItemStack book) {
+        try {
+            Map<org.bukkit.enchantments.Enchantment, Integer> map = service.getBookStoredEnchants(book);
+            if (map.isEmpty()) return "{}";
+            StringJoiner sj = new StringJoiner(", ");
+            for (Map.Entry<org.bukkit.enchantments.Enchantment, Integer> e : map.entrySet()) {
+                if (e.getKey() == null || e.getKey().getKey() == null) continue;
+                sj.add(e.getKey().getKey().toString() + ":" + e.getValue());
+            }
+            return "{" + sj + "}";
+        } catch (Exception ex) {
+            return "{error}";
         }
     }
 }
