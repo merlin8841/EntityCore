@@ -39,29 +39,27 @@ public final class ProvenanceListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (player.getGameMode() != GameMode.CREATIVE) return;
 
-        // IMPORTANT:
-        // Only tag when the click is NOT inside the player's own inventory.
-        // This prevents falsely tagging natural items just because the player rearranged stacks in creative.
+        // Only tag when click is NOT inside the player's own inventory (prevents false positives)
         Inventory clicked = event.getClickedInventory();
         if (clicked == null) return;
         if (clicked.equals(player.getInventory())) return;
 
-        // Item being placed onto the cursor from the creative menu
+        // Tag cursor item coming from creative menu
         ItemStack cursor = event.getCursor();
         if (cursor != null && cursor.getType() != Material.AIR && !service.isUnnatural(cursor)) {
             event.setCursor(service.tagUnnatural(cursor, "creative", null));
             if (config.debug()) {
-                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE cursor item for " + player.getName()
+                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE cursor for " + player.getName()
                         + " item=" + cursor.getType() + " x" + cursor.getAmount());
             }
         }
 
-        // Some creative interactions affect current item as well; keep it safe.
+        // Some interactions also affect current item
         ItemStack current = event.getCurrentItem();
         if (current != null && current.getType() != Material.AIR && !service.isUnnatural(current)) {
             event.setCurrentItem(service.tagUnnatural(current, "creative", null));
             if (config.debug()) {
-                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE current item for " + player.getName()
+                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE current for " + player.getName()
                         + " item=" + current.getType() + " x" + current.getAmount());
             }
         }
@@ -98,7 +96,7 @@ public final class ProvenanceListener implements Listener {
                 || (!(sender instanceof Player)); // console allowed
         if (!allowed) return;
 
-        // Tokenize with quote support (Bedrock sometimes uses quotes)
+        // Tokenize with quote support
         List<String> parts = tokenize(msg);
         if (parts.size() < 2) return;
 
@@ -126,27 +124,29 @@ public final class ProvenanceListener implements Listener {
             return;
         }
 
+        // Capture final copies for lambda
+        final String finalTargetToken = targetToken;
+        final String finalSource = isGive ? "command:/give" : "command:/item";
+
         // Snapshot inventories now; then rescan next tick after command applies
         Map<UUID, ItemStack[]> before = new HashMap<>();
         for (Player t : targets) {
             before.put(t.getUniqueId(), cloneContents(t.getInventory().getContents()));
         }
 
-        String source = isGive ? "command:/give" : "command:/item";
-
-        // Delay 1 tick to ensure the command has applied inventory changes.
+        // Delay 1 tick to ensure command applied changes
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             for (Player t : targets) {
                 ItemStack[] pre = before.get(t.getUniqueId());
                 if (pre == null) continue;
-                applyTagDiff(t, pre, source);
+                applyTagDiff(t, pre, finalSource);
             }
 
             if (config.debug()) {
                 plugin.getLogger().info("[Provenance][DEBUG] Tagged give-like command by " + sender.getName()
                         + " -> targets=" + targets.size()
-                        + " token=" + targetToken
-                        + " source=" + source);
+                        + " token=" + finalTargetToken
+                        + " source=" + finalSource);
             }
         }, 1L);
     }
@@ -160,7 +160,7 @@ public final class ProvenanceListener implements Listener {
         if (!out.isEmpty()) return out;
 
         String stripped = stripQuotes(token);
-        Player exact = Bukkit.getPlayerExact(stripped);
+        var exact = Bukkit.getPlayerExact(stripped);
         if (exact != null) return List.of(exact);
 
         for (Player p : Bukkit.getOnlinePlayers()) {
@@ -230,7 +230,7 @@ public final class ProvenanceListener implements Listener {
 
     /**
      * After /give, detect which slots increased and tag ONLY the added delta.
-     * If it merged into an existing natural stack, we split out the delta into its own tagged stack.
+     * If it merged into an existing natural stack, split out the delta into its own tagged stack.
      */
     private void applyTagDiff(Player target, ItemStack[] before, String source) {
         Inventory inv = target.getInventory();
