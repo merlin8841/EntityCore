@@ -67,7 +67,6 @@ public final class ExtendedAnvilGui {
         holder.setInventory(inv);
 
         build(inv);
-
         player.openInventory(inv);
 
         if (config.debug()) {
@@ -175,9 +174,11 @@ public final class ExtendedAnvilGui {
 
         if (!pr.ok) {
             top.setItem(SLOT_PREVIEW_ITEM, named(Material.RED_STAINED_GLASS_PANE, pr.error == null ? "Invalid" : pr.error));
+
             if (config.debug()) {
                 plugin.getLogger().info("[ExtendedAnvil][DEBUG] Preview failed for " + player.getName() + ": " + pr.error);
             }
+
             player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 0.8f);
             return;
         }
@@ -204,8 +205,6 @@ public final class ExtendedAnvilGui {
             if (config.debug()) {
                 plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit blocked for " + player.getName() + ": " + pr.error);
             }
-            // Optional: if you want player feedback on failure, uncomment:
-            // player.sendMessage("Cannot commit: " + (pr.error == null ? "Invalid" : pr.error));
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             return;
         }
@@ -213,7 +212,8 @@ public final class ExtendedAnvilGui {
         int net = pr.netLevels;
         if (net > 0 && player.getLevel() < net) {
             if (config.debug()) {
-                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit blocked (levels) for " + player.getName() + ": need=" + net + " have=" + player.getLevel());
+                plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit blocked (levels) for " + player.getName()
+                    + ": need=" + net + " have=" + player.getLevel());
             }
             player.sendMessage("Not enough levels. Need " + net + " (you have " + player.getLevel() + ").");
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
@@ -232,7 +232,6 @@ public final class ExtendedAnvilGui {
             if (c.slot < 0 || c.slot >= top.getSize()) continue;
             ItemStack it = top.getItem(c.slot);
             if (it == null) continue;
-
             if (c.amount <= 0) continue;
 
             if (it.getAmount() <= c.amount) {
@@ -253,11 +252,9 @@ public final class ExtendedAnvilGui {
             }
         }
 
-        // Sounds
         player.playSound(player.getLocation(), Sound.BLOCK_ANVIL_USE, 1f, 1f);
 
-        // ✅ Player chat summary (requested)
-        // Cost = levels spent, Return = levels gained, Net = spent - returned
+        // ✅ Player chat summary
         if (pr.netLevels > 0) {
             player.sendMessage("Extended Anvil: Cost " + pr.costLevels + " levels, Return " + pr.returnLevels + " levels (Net -" + pr.netLevels + ").");
         } else if (pr.netLevels < 0) {
@@ -266,7 +263,7 @@ public final class ExtendedAnvilGui {
             player.sendMessage("Extended Anvil: Cost " + pr.costLevels + " levels, Return " + pr.returnLevels + " levels (Net 0).");
         }
 
-        // ✅ Debug “safety log” (requested)
+        // ✅ Debug safety log
         if (config.debug()) {
             plugin.getLogger().info("[ExtendedAnvil][DEBUG] Commit ok for " + player.getName()
                 + " cost=" + pr.costLevels
@@ -281,10 +278,13 @@ public final class ExtendedAnvilGui {
 
     /**
      * Simulate left-to-right operations:
-     * - ENCHANTED_BOOK: merge enchants (keep higher, no upgrading), conflicts blocked
-     * - BOOK stack: disenchant (1 => all, 2+ => one by priority), consumes 1 book each operation
-     * - MATERIAL: repair with material (consumes some)
-     * - SAME ITEM: repair + merge enchants (consumes 1)
+     * - BOOK: disenchant (1 => all, 2+ => one by priority), consumes 1 book each step
+     * - ENCHANTED_BOOK or ITEM: merge enchants (keep higher, no upgrading), conflicts blocked
+     * - MATERIAL: repair with material
+     * - SAME ITEM: repair + merge enchants (no upgrading)
+     *
+     * IMPORTANT: To get correct scaling (prior-work penalty) during a queue preview,
+     * we must mutate the working clone's PDC counts as we apply steps.
      */
     private static PreviewResult simulate(Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
         ItemStack base = top.getItem(SLOT_TARGET);
@@ -314,51 +314,47 @@ public final class ExtendedAnvilGui {
 
                 working = dr.newItem();
                 ret += dr.returnLevels();
-                consumes.add(new Consume(slot, 1)); // consume 1 book per operation
+                consumes.add(new Consume(slot, 1));
                 outBooks.addAll(dr.outBooks());
                 continue;
             }
 
-            // Enchant / merge via ENCHANTED_BOOK or ITEM (enchants only, no upgrades)
-            if (op.getType() == Material.ENCHANTED_BOOK || op.getType() != Material.AIR) {
-                // Repair with same item
-                if (op.getType() == working.getType() && op.getType() != Material.ENCHANTED_BOOK && service.isDamageable(working)) {
-                    ExtendedAnvilService.RepairResult rr = service.repairWithSameItem(working, op);
-                    if (rr.ok() && rr.newItem() != null) {
-                        working = rr.newItem();
-                        cost += service.computeRepairCostLevels(working);
-                        service.incrementRepairCount(working);
-                        consumes.add(new Consume(slot, 1));
-                        continue;
-                    }
-                }
-
-                // Repair with material
-                if (service.isDamageable(working)) {
-                    ExtendedAnvilService.RepairResult rr = service.repairWithMaterial(working, op);
-                    if (rr.ok() && rr.newItem() != null && rr.amountConsumed() > 0) {
-                        working = rr.newItem();
-                        cost += service.computeRepairCostLevels(working);
-                        service.incrementRepairCount(working);
-                        consumes.add(new Consume(slot, rr.amountConsumed()));
-                        continue;
-                    }
-                }
-
-                // Enchant merge
-                if (op.getType() == Material.ENCHANTED_BOOK || (op.getType() == working.getType() && !service.isDamageable(working))) {
-                    ExtendedAnvilService.MergeResult mr = service.mergeInto(working, op);
-                    if (!mr.ok() || mr.newItem() == null) {
-                        return PreviewResult.fail(mr.error() == null ? "Enchant merge failed." : mr.error());
-                    }
-                    working = mr.newItem();
-                    cost += mr.costLevels();
+            // Repair with same item
+            if (op.getType() == working.getType() && op.getType() != Material.ENCHANTED_BOOK && service.isDamageable(working)) {
+                ExtendedAnvilService.RepairResult rr = service.repairWithSameItem(working, op);
+                if (rr.ok() && rr.newItem() != null) {
+                    working = rr.newItem();
+                    cost += service.computeRepairCostLevels(working);
+                    service.incrementRepairCount(working);
                     consumes.add(new Consume(slot, 1));
                     continue;
                 }
             }
 
-            // If we get here, the item in that slot wasn't usable
+            // Repair with material
+            if (service.isDamageable(working)) {
+                ExtendedAnvilService.RepairResult rr = service.repairWithMaterial(working, op);
+                if (rr.ok() && rr.newItem() != null && rr.amountConsumed() > 0) {
+                    working = rr.newItem();
+                    cost += service.computeRepairCostLevels(working);
+                    service.incrementRepairCount(working);
+                    consumes.add(new Consume(slot, rr.amountConsumed()));
+                    continue;
+                }
+            }
+
+            // Enchant merge (book or enchant-bearing item)
+            if (op.getType() == Material.ENCHANTED_BOOK || op.getType() == working.getType() || op.getItemMeta() != null) {
+                ExtendedAnvilService.MergeResult mr = service.mergeInto(working, op);
+                if (!mr.ok() || mr.newItem() == null) {
+                    return PreviewResult.fail(mr.error() == null ? "Enchant merge failed." : mr.error());
+                }
+                working = mr.newItem();
+                cost += mr.costLevels();
+                consumes.add(new Consume(slot, 1));
+                continue;
+            }
+
             return PreviewResult.fail("Slot " + (slot + 1) + " item can't be used.");
         }
 
