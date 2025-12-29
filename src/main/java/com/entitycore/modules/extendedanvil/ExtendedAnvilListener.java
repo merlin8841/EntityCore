@@ -35,7 +35,7 @@ public final class ExtendedAnvilListener implements Listener {
         if (holder instanceof ExtendedAnvilAdminGui.Holder) {
             String title = event.getView().getTitle();
 
-            if (title.equals("EA Admin")) {
+            if (title.equals(ExtendedAnvilAdminGui.TITLE)) {
                 ExtendedAnvilAdminGui.handleClick(player, event, plugin, config, service);
                 return;
             }
@@ -45,12 +45,12 @@ public final class ExtendedAnvilListener implements Listener {
                 return;
             }
 
-            if (title.equals("EA Enchant Caps")) {
+            if (title.equals(ExtendedAnvilCapsGui.TITLE)) {
                 ExtendedAnvilCapsGui.handleClick(player, event, plugin, config);
                 return;
             }
 
-            if (title.equals("EA Disenchant Priority")) {
+            if (title.equals(ExtendedAnvilPriorityGui.TITLE)) {
                 ExtendedAnvilPriorityGui.handleClick(player, event, plugin, config);
             }
         }
