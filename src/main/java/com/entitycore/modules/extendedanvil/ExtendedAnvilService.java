@@ -131,13 +131,14 @@ public final class ExtendedAnvilService {
             if (resultLevel <= 0) continue;
 
             if (resultLevel != current) {
-                // Cost MUST be computed from the current working item (out),
-                // otherwise addCount never scales correctly.
+                // compute from the current working item state
                 totalCost += computeEnchantCost(out, ench, resultLevel);
 
                 outMeta.addEnchant(ench, resultLevel, true);
 
-                incrementAddCount(out, ench);
+                // IMPORTANT: update PDC on the SAME meta object (no overwrite)
+                incrementAddCount(outMeta, ench);
+
                 changed = true;
             }
         }
@@ -291,8 +292,7 @@ public final class ExtendedAnvilService {
 
         // SCUTE doesn't exist on some older APIs -> safe lookup
         if (n.equals("TURTLE_HELMET")) {
-            Material scute = Material.matchMaterial("SCUTE");
-            return scute; // may be null on very old jars
+            return Material.matchMaterial("SCUTE"); // may be null on very old jars
         }
 
         if (n.startsWith("NETHERITE_")) return Material.NETHERITE_INGOT;
@@ -324,7 +324,7 @@ public final class ExtendedAnvilService {
     }
 
     // --------------------
-    // Existing disenchant methods (kept)
+    // Disenchant methods (FIXED: PDC persistence)
     // --------------------
 
     public DisenchantResult disenchantAllToOneBook(ItemStack target, ItemStack emptyBook) {
@@ -350,13 +350,20 @@ public final class ExtendedAnvilService {
             if (!canRemove(ench)) continue;
 
             bookMeta.addStoredEnchant(ench, lvl, true);
+
+            // remove enchant
             meta.removeEnchant(ench);
 
+            // return calc uses ORIGINAL target (same as before)
             totalReturn += computeDisenchantReturn(target, ench, lvl);
-            incrementRemoveCount(newItem, ench);
+
+            // IMPORTANT: update PDC on SAME meta object
+            incrementRemoveCount(meta, ench);
         }
 
         outBook.setItemMeta(bookMeta);
+
+        // commit both enchant removals AND PDC updates
         newItem.setItemMeta(meta);
 
         EnchantmentStorageMeta check = (EnchantmentStorageMeta) outBook.getItemMeta();
@@ -381,14 +388,16 @@ public final class ExtendedAnvilService {
         Enchantment chosen = null;
         int chosenLevel = 0;
 
-        for (Enchantment ench : priority) {
-            if (ench == null) continue;
-            Integer lvl = enchants.get(ench);
-            if (lvl == null || lvl <= 0) continue;
-            if (!canRemove(ench)) continue;
-            chosen = ench;
-            chosenLevel = lvl;
-            break;
+        if (priority != null) {
+            for (Enchantment ench : priority) {
+                if (ench == null) continue;
+                Integer lvl = enchants.get(ench);
+                if (lvl == null || lvl <= 0) continue;
+                if (!canRemove(ench)) continue;
+                chosen = ench;
+                chosenLevel = lvl;
+                break;
+            }
         }
 
         if (chosen == null) {
@@ -410,51 +419,75 @@ public final class ExtendedAnvilService {
         bookMeta.addStoredEnchant(chosen, chosenLevel, true);
         outBook.setItemMeta(bookMeta);
 
+        // remove chosen enchant
         meta.removeEnchant(chosen);
+
+        // IMPORTANT: update PDC on SAME meta object
+        incrementRemoveCount(meta, chosen);
+
+        // commit
         newItem.setItemMeta(meta);
 
         int returned = computeDisenchantReturn(target, chosen, chosenLevel);
-        incrementRemoveCount(newItem, chosen);
 
         return DisenchantResult.ok(newItem, outBook, returned, 1);
     }
 
     // --------------------
-    // PDC counts (existing)
+    // PDC counts (public API unchanged)
     // --------------------
 
     public int getAddCount(ItemStack item, Enchantment ench) {
+        if (item == null || ench == null) return 0;
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return 0;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        Integer v = pdc.get(keys.addCountKey(ench), PersistentDataType.INTEGER);
-        return v == null ? 0 : Math.max(0, v);
+        return getInt(meta.getPersistentDataContainer(), keys.addCountKey(ench));
     }
 
     public int getRemoveCount(ItemStack item, Enchantment ench) {
+        if (item == null || ench == null) return 0;
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return 0;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        Integer v = pdc.get(keys.removeCountKey(ench), PersistentDataType.INTEGER);
-        return v == null ? 0 : Math.max(0, v);
+        return getInt(meta.getPersistentDataContainer(), keys.removeCountKey(ench));
     }
 
     public void incrementAddCount(ItemStack item, Enchantment ench) {
+        if (item == null || ench == null) return;
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        int now = getAddCount(item, ench) + 1;
-        pdc.set(keys.addCountKey(ench), PersistentDataType.INTEGER, now);
+        incrementAddCount(meta, ench);
         item.setItemMeta(meta);
     }
 
     public void incrementRemoveCount(ItemStack item, Enchantment ench) {
+        if (item == null || ench == null) return;
         ItemMeta meta = item.getItemMeta();
         if (meta == null) return;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        int now = getRemoveCount(item, ench) + 1;
-        pdc.set(keys.removeCountKey(ench), PersistentDataType.INTEGER, now);
+        incrementRemoveCount(meta, ench);
         item.setItemMeta(meta);
+    }
+
+    // internal (meta-level) helpers to avoid PDC getting wiped by later setItemMeta()
+    private void incrementAddCount(ItemMeta meta, Enchantment ench) {
+        if (meta == null || ench == null) return;
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        int now = getInt(pdc, keys.addCountKey(ench)) + 1;
+        pdc.set(keys.addCountKey(ench), PersistentDataType.INTEGER, now);
+    }
+
+    private void incrementRemoveCount(ItemMeta meta, Enchantment ench) {
+        if (meta == null || ench == null) return;
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
+        int now = getInt(pdc, keys.removeCountKey(ench)) + 1;
+        pdc.set(keys.removeCountKey(ench), PersistentDataType.INTEGER, now);
+    }
+
+    private static int getInt(PersistentDataContainer pdc, Object keyObj) {
+        if (pdc == null) return 0;
+        // ExtendedAnvilKeys returns NamespacedKey; keep it loose here to avoid imports mismatch.
+        if (!(keyObj instanceof org.bukkit.NamespacedKey key)) return 0;
+        Integer v = pdc.get(key, PersistentDataType.INTEGER);
+        return v == null ? 0 : Math.max(0, v);
     }
 
     // --------------------
