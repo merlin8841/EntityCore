@@ -41,11 +41,7 @@ public final class ProvenanceService {
     }
 
     public UUID getStamp(ItemStack it) {
-        if (it == null) return null;
-        ItemMeta meta = it.getItemMeta();
-        if (meta == null) return null;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        String raw = pdc.get(keys.provStamp(), PersistentDataType.STRING);
+        String raw = getString(it, keys.provStamp());
         if (raw == null) return null;
         try {
             return UUID.fromString(raw);
@@ -55,11 +51,7 @@ public final class ProvenanceService {
     }
 
     public UUID getParentStamp(ItemStack it) {
-        if (it == null) return null;
-        ItemMeta meta = it.getItemMeta();
-        if (meta == null) return null;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        String raw = pdc.get(keys.provParentStamp(), PersistentDataType.STRING);
+        String raw = getString(it, keys.provParentStamp());
         if (raw == null) return null;
         try {
             return UUID.fromString(raw);
@@ -69,11 +61,14 @@ public final class ProvenanceService {
     }
 
     public String getSource(ItemStack it) {
+        return getString(it, keys.provSource());
+    }
+
+    private String getString(ItemStack it, NamespacedKey key) {
         if (it == null) return null;
         ItemMeta meta = it.getItemMeta();
         if (meta == null) return null;
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
-        return pdc.get(keys.provSource(), PersistentDataType.STRING);
+        return meta.getPersistentDataContainer().get(key, PersistentDataType.STRING);
     }
 
     /**
@@ -82,9 +77,19 @@ public final class ProvenanceService {
      */
     public ItemStack tagUnnatural(ItemStack it, String source, UUID parentStamp) {
         if (it == null) return null;
+
         ItemStack out = it.clone();
+
+        // Some items can return null ItemMeta depending on implementation.
+        // Force-create one so PDC always works.
         ItemMeta meta = out.getItemMeta();
-        if (meta == null) return out;
+        if (meta == null) {
+            meta = Bukkit.getItemFactory().getItemMeta(out.getType());
+            if (meta == null) {
+                // Extremely rare: if factory can't provide meta, we can't store PDC.
+                return out;
+            }
+        }
 
         PersistentDataContainer pdc = meta.getPersistentDataContainer();
         pdc.set(keys.provState(), PersistentDataType.STRING, STATE_UNNATURAL);
@@ -96,7 +101,6 @@ public final class ProvenanceService {
         if (parentStamp != null) {
             pdc.set(keys.provParentStamp(), PersistentDataType.STRING, parentStamp.toString());
         } else {
-            // Clear if previously present
             pdc.remove(keys.provParentStamp());
         }
 
@@ -106,9 +110,14 @@ public final class ProvenanceService {
 
     public ItemStack clearProvenance(ItemStack it) {
         if (it == null) return null;
+
         ItemStack out = it.clone();
+
         ItemMeta meta = out.getItemMeta();
-        if (meta == null) return out;
+        if (meta == null) {
+            meta = Bukkit.getItemFactory().getItemMeta(out.getType());
+            if (meta == null) return out;
+        }
 
         PersistentDataContainer pdc = meta.getPersistentDataContainer();
         pdc.remove(keys.provState());
@@ -146,11 +155,10 @@ public final class ProvenanceService {
 
         try {
             return Bukkit.selectEntities(sender, token).stream()
-                .filter(e -> e instanceof Player)
-                .map(e -> (Player) e)
-                .collect(Collectors.toList());
+                    .filter(e -> e instanceof Player)
+                    .map(e -> (Player) e)
+                    .collect(Collectors.toList());
         } catch (Throwable ignored) {
-            // Fallback: literal name
             Player p = Bukkit.getPlayerExact(token);
             return p == null ? List.of() : List.of(p);
         }
@@ -158,14 +166,15 @@ public final class ProvenanceService {
 
     /**
      * Get a readable dump of PDC keys for /pdc.
-     * If allKeys=false, filters to EntityCore keys (prov_*, ea_*, etc.)
+     * If allKeys=false, filters to EntityCore keys.
      */
     public List<String> dumpPdc(ItemStack it, boolean allKeys) {
         if (it == null) return List.of("No item.");
+
         ItemMeta meta = it.getItemMeta();
         if (meta == null) return List.of("Item has no meta.");
-        PersistentDataContainer pdc = meta.getPersistentDataContainer();
 
+        PersistentDataContainer pdc = meta.getPersistentDataContainer();
         Set<NamespacedKey> keysSet = pdc.getKeys();
         if (keysSet.isEmpty()) return List.of("No PDC keys.");
 
