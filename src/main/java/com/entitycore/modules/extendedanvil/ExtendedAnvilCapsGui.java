@@ -17,13 +17,18 @@ import java.util.List;
 
 public final class ExtendedAnvilCapsGui {
 
+    public static final String TITLE = "EA Enchant Caps";
+
     private static final int SIZE = 54;
     private static final int SLOT_BACK = 49;
+    private static final int SLOT_PAGE = 48;
+    private static final int SLOT_PREV = 45;
+    private static final int SLOT_NEXT = 53;
 
     private ExtendedAnvilCapsGui() {}
 
     public static void open(Player player, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        Inventory inv = Bukkit.createInventory(new ExtendedAnvilAdminGui.Holder(player), SIZE, "EA Enchant Caps");
+        Inventory inv = Bukkit.createInventory(new ExtendedAnvilAdminGui.Holder(player), SIZE, TITLE);
         build(inv, config, 0);
         player.openInventory(inv);
     }
@@ -58,17 +63,15 @@ public final class ExtendedAnvilCapsGui {
             inv.setItem(slot, it);
         }
 
-        inv.setItem(45, named(Material.ARROW, "Prev Page"));
-        inv.setItem(53, named(Material.ARROW, "Next Page"));
+        inv.setItem(SLOT_PREV, named(Material.ARROW, "Prev Page"));
+        inv.setItem(SLOT_NEXT, named(Material.ARROW, "Next Page"));
         inv.setItem(SLOT_BACK, named(Material.ARROW, "Back"));
 
-        inv.setItem(48, lore(Material.PAPER, "Page",
-            List.of(String.valueOf(page)))
-        );
+        inv.setItem(SLOT_PAGE, lore(Material.PAPER, "Page", List.of(String.valueOf(page))));
     }
 
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        if (!event.getView().getTitle().equals("EA Enchant Caps")) return;
+        if (!event.getView().getTitle().equals(TITLE)) return;
 
         if (!player.hasPermission("entitycore.extendedanvil.admin")) {
             event.setCancelled(true);
@@ -82,17 +85,18 @@ public final class ExtendedAnvilCapsGui {
 
         if (slot == SLOT_BACK) {
             ExtendedAnvilAdminGui.open(player, plugin, config, new ExtendedAnvilService(plugin, config));
+            click(player);
             return;
         }
 
-        if (slot == 45) {
+        if (slot == SLOT_PREV) {
             page = Math.max(0, page - 1);
             build(event.getInventory(), config, page);
             click(player);
             return;
         }
 
-        if (slot == 53) {
+        if (slot == SLOT_NEXT) {
             page = page + 1;
             build(event.getInventory(), config, page);
             click(player);
@@ -126,7 +130,7 @@ public final class ExtendedAnvilCapsGui {
     }
 
     private static int readPage(Inventory inv) {
-        ItemStack paper = inv.getItem(48);
+        ItemStack paper = inv.getItem(SLOT_PAGE);
         if (paper == null) return 0;
         ItemMeta meta = paper.getItemMeta();
         if (meta == null || meta.getLore() == null || meta.getLore().isEmpty()) return 0;
