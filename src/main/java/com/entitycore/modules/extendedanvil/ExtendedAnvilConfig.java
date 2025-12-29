@@ -59,6 +59,15 @@ public final class ExtendedAnvilConfig {
 
         yaml.set("disenchant.allow_curse_removal", true);
 
+        // Repair costing (levels)
+        yaml.set("repair.base_levels", 1);
+        yaml.set("repair.base_multiplier", 1.0);
+        yaml.set("repair.increment_per_repair", 0.5);
+
+        // Repair behavior toggles
+        yaml.set("repair.allow_material_repair", true);
+        yaml.set("repair.allow_item_merge_repair", true);
+
         // Default: vanilla caps
         ConfigurationSection caps = yaml.createSection("caps");
         for (Enchantment ench : Enchantment.values()) {
@@ -66,7 +75,7 @@ public final class ExtendedAnvilConfig {
             caps.set(keyString(ench), ench.getMaxLevel());
         }
 
-        // Default priority: vanilla registry order (stable enough); admin can reorder
+        // Default priority: vanilla registry order
         List<String> priority = new ArrayList<>();
         for (Enchantment ench : Enchantment.values()) {
             if (ench == null || ench.getKey() == null) continue;
@@ -76,7 +85,6 @@ public final class ExtendedAnvilConfig {
     }
 
     private void applyMissingDefaults() {
-        // Minimal defaulting so updates don’t wipe configs.
         if (!yaml.contains("debug")) yaml.set("debug", false);
 
         if (!yaml.contains("enchant.cost.base_per_level")) yaml.set("enchant.cost.base_per_level", 2);
@@ -88,6 +96,14 @@ public final class ExtendedAnvilConfig {
 
         if (!yaml.contains("disenchant.allow_curse_removal")) yaml.set("disenchant.allow_curse_removal", true);
 
+        // Repair defaults
+        if (!yaml.contains("repair.base_levels")) yaml.set("repair.base_levels", 1);
+        if (!yaml.contains("repair.base_multiplier")) yaml.set("repair.base_multiplier", 1.0);
+        if (!yaml.contains("repair.increment_per_repair")) yaml.set("repair.increment_per_repair", 0.5);
+
+        if (!yaml.contains("repair.allow_material_repair")) yaml.set("repair.allow_material_repair", true);
+        if (!yaml.contains("repair.allow_item_merge_repair")) yaml.set("repair.allow_item_merge_repair", true);
+
         if (!yaml.contains("caps")) {
             ConfigurationSection caps = yaml.createSection("caps");
             for (Enchantment ench : Enchantment.values()) {
@@ -95,7 +111,6 @@ public final class ExtendedAnvilConfig {
                 caps.set(keyString(ench), ench.getMaxLevel());
             }
         } else {
-            // Ensure any new enchantments get a cap entry
             ConfigurationSection caps = yaml.getConfigurationSection("caps");
             if (caps != null) {
                 for (Enchantment ench : Enchantment.values()) {
@@ -174,6 +189,47 @@ public final class ExtendedAnvilConfig {
         yaml.set("disenchant.allow_curse_removal", value);
     }
 
+    // Repair settings
+    public int repairBaseLevels() {
+        return Math.max(0, yaml.getInt("repair.base_levels", 1));
+    }
+
+    public void setRepairBaseLevels(int value) {
+        yaml.set("repair.base_levels", Math.max(0, value));
+    }
+
+    public double repairBaseMultiplier() {
+        return Math.max(0.0, yaml.getDouble("repair.base_multiplier", 1.0));
+    }
+
+    public void setRepairBaseMultiplier(double value) {
+        yaml.set("repair.base_multiplier", Math.max(0.0, value));
+    }
+
+    public double repairIncrementPerRepair() {
+        return Math.max(0.0, yaml.getDouble("repair.increment_per_repair", 0.5));
+    }
+
+    public void setRepairIncrementPerRepair(double value) {
+        yaml.set("repair.increment_per_repair", Math.max(0.0, value));
+    }
+
+    public boolean allowMaterialRepair() {
+        return yaml.getBoolean("repair.allow_material_repair", true);
+    }
+
+    public void setAllowMaterialRepair(boolean value) {
+        yaml.set("repair.allow_material_repair", value);
+    }
+
+    public boolean allowItemMergeRepair() {
+        return yaml.getBoolean("repair.allow_item_merge_repair", true);
+    }
+
+    public void setAllowItemMergeRepair(boolean value) {
+        yaml.set("repair.allow_item_merge_repair", value);
+    }
+
     public int capFor(Enchantment ench) {
         if (ench == null || ench.getKey() == null) return 0;
         String k = keyString(ench);
@@ -201,7 +257,6 @@ public final class ExtendedAnvilConfig {
             if (e != null) result.add(e);
         }
 
-        // Ensure all enchants are present (append missing)
         Set<Enchantment> present = new HashSet<>(result);
         for (Enchantment ench : Enchantment.values()) {
             if (ench == null || ench.getKey() == null) continue;
