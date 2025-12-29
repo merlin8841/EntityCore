@@ -7,6 +7,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCreativeEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
@@ -31,7 +32,7 @@ public final class ProvenanceListener implements Listener {
     }
 
     // ---------
-    // CREATIVE tagging (pulling items from creative menu)
+    // CREATIVE tagging (preferred: InventoryCreativeEvent)
     // ---------
 
     @EventHandler(ignoreCancelled = true)
@@ -39,34 +40,90 @@ public final class ProvenanceListener implements Listener {
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (player.getGameMode() != GameMode.CREATIVE) return;
 
-        // Only tag when click is NOT inside the player's own inventory (prevents false positives)
         Inventory clicked = event.getClickedInventory();
         if (clicked == null) return;
+
+        // Only tag when click is NOT inside the player's own inventory
         if (clicked.equals(player.getInventory())) return;
 
-        // Tag cursor item coming from creative menu
+        boolean changed = false;
+
         ItemStack cursor = event.getCursor();
         if (cursor != null && cursor.getType() != Material.AIR && !service.isUnnatural(cursor)) {
             event.setCursor(service.tagUnnatural(cursor, "creative", null));
-            if (config.debug()) {
-                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE cursor for " + player.getName()
-                        + " item=" + cursor.getType() + " x" + cursor.getAmount());
-            }
+            changed = true;
         }
 
-        // Some interactions also affect current item
         ItemStack current = event.getCurrentItem();
         if (current != null && current.getType() != Material.AIR && !service.isUnnatural(current)) {
             event.setCurrentItem(service.tagUnnatural(current, "creative", null));
+            changed = true;
+        }
+
+        if (changed) {
+            Bukkit.getScheduler().runTask(plugin, player::updateInventory);
             if (config.debug()) {
-                plugin.getLogger().info("[Provenance][DEBUG] Tagged CREATIVE current for " + player.getName()
-                        + " item=" + current.getType() + " x" + current.getAmount());
+                plugin.getLogger().info("[Provenance][DEBUG] CreativeEvent tagged item(s) for " + player.getName());
             }
         }
     }
 
     // ---------
-    // /give and /item hooks (no new spawn commands)
+    // CREATIVE tagging fallback (Geyser sometimes doesn't fire InventoryCreativeEvent)
+    // ---------
+
+    @EventHandler(ignoreCancelled = true)
+    public void onCreativeFallbackClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+        if (player.getGameMode() != GameMode.CREATIVE) return;
+
+        Inventory clicked = event.getClickedInventory();
+        if (clicked == null) return;
+
+        // If the player is clicking inside THEIR inventory, do nothing (avoid tagging rearranges)
+        if (clicked.equals(player.getInventory())) return;
+
+        // Only act on actions that typically pull from a menu into player inventory/cursor
+        InventoryAction action = event.getAction();
+        boolean isTakeAction =
+                action == InventoryAction.PICKUP_ALL
+                        || action == InventoryAction.PICKUP_HALF
+                        || action == InventoryAction.PICKUP_ONE
+                        || action == InventoryAction.PICKUP_SOME
+                        || action == InventoryAction.CLONE_STACK
+                        || action == InventoryAction.MOVE_TO_OTHER_INVENTORY;
+
+        if (!isTakeAction) return;
+
+        // Next tick: tag cursor if player grabbed something, and also tag the target slot if MOVE_TO_OTHER_INVENTORY happened
+        Bukkit.getScheduler().runTaskLater(plugin, () -> {
+            boolean changed = false;
+
+            ItemStack cur = event.getView().getCursor();
+            if (cur != null && cur.getType() != Material.AIR && !service.isUnnatural(cur)) {
+                event.getView().setCursor(service.tagUnnatural(cur, "creative", null));
+                changed = true;
+            }
+
+            // Also scan a tiny subset: hotbar + selected slot (cheap and usually where items land)
+            int held = player.getInventory().getHeldItemSlot();
+            ItemStack hot = player.getInventory().getItem(held);
+            if (hot != null && hot.getType() != Material.AIR && !service.isUnnatural(hot)) {
+                player.getInventory().setItem(held, service.tagUnnatural(hot, "creative", null));
+                changed = true;
+            }
+
+            if (changed) {
+                player.updateInventory();
+                if (config.debug()) {
+                    plugin.getLogger().info("[Provenance][DEBUG] CreativeFallback tagged item(s) for " + player.getName());
+                }
+            }
+        }, 1L);
+    }
+
+    // ---------
+    // /give and /item hooks
     // ---------
 
     @EventHandler
@@ -91,19 +148,15 @@ public final class ProvenanceListener implements Listener {
         boolean isItem = lower.startsWith("item ") || lower.startsWith("minecraft:item ");
         if (!isGive && !isItem) return;
 
-        // Only tag if sender is an operator OR has explicit permission
-        boolean allowed = (sender instanceof Player p && (p.isOp() || p.hasPermission("entitycore.provenance.hook")))
-                || (!(sender instanceof Player)); // console allowed
-        if (!allowed) return;
+        // IMPORTANT CHANGE:
+        // Do NOT require OP/permission here. If the command is allowed to run, we tag its results.
+        // (Your perms system already controls who can /give.)
 
-        // Tokenize with quote support
         List<String> parts = tokenize(msg);
         if (parts.size() < 2) return;
 
         String targetToken;
 
-        // /give <targets> <item> [count...]
-        // /item give <targets> <item> [count...]
         if (isGive) {
             if (parts.size() < 3) return;
             targetToken = parts.get(1);
@@ -124,22 +177,21 @@ public final class ProvenanceListener implements Listener {
             return;
         }
 
-        // Capture final copies for lambda
         final String finalTargetToken = targetToken;
         final String finalSource = isGive ? "command:/give" : "command:/item";
 
-        // Snapshot inventories now; then rescan next tick after command applies
         Map<UUID, ItemStack[]> before = new HashMap<>();
         for (Player t : targets) {
             before.put(t.getUniqueId(), cloneContents(t.getInventory().getContents()));
         }
 
-        // Delay 1 tick to ensure command applied changes
+        // Delay 2 ticks for Bedrock/Geyser inventory timing
         Bukkit.getScheduler().runTaskLater(plugin, () -> {
             for (Player t : targets) {
                 ItemStack[] pre = before.get(t.getUniqueId());
                 if (pre == null) continue;
                 applyTagDiff(t, pre, finalSource);
+                t.updateInventory();
             }
 
             if (config.debug()) {
@@ -148,7 +200,7 @@ public final class ProvenanceListener implements Listener {
                         + " token=" + finalTargetToken
                         + " source=" + finalSource);
             }
-        }, 1L);
+        }, 2L);
     }
 
     private List<Player> resolveTargetsSmart(CommandSender sender, String token) {
@@ -160,7 +212,7 @@ public final class ProvenanceListener implements Listener {
         if (!out.isEmpty()) return out;
 
         String stripped = stripQuotes(token);
-        var exact = Bukkit.getPlayerExact(stripped);
+        Player exact = Bukkit.getPlayerExact(stripped);
         if (exact != null) return List.of(exact);
 
         for (Player p : Bukkit.getOnlinePlayers()) {
@@ -228,10 +280,6 @@ public final class ProvenanceListener implements Listener {
         return out;
     }
 
-    /**
-     * After /give, detect which slots increased and tag ONLY the added delta.
-     * If it merged into an existing natural stack, split out the delta into its own tagged stack.
-     */
     private void applyTagDiff(Player target, ItemStack[] before, String source) {
         Inventory inv = target.getInventory();
         ItemStack[] after = inv.getContents();
