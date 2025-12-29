@@ -18,18 +18,18 @@ public final class InfectionService {
     private final JavaPlugin plugin;
     private final InfectionConfig config;
 
-    // frontier + seen (BFS spread)
+    // BFS frontier
     private final ArrayDeque<BlockKey> frontier = new ArrayDeque<>();
     private final HashSet<BlockKey> seen = new HashSet<>();
 
-    // frontier counts per chunk to decide unload
+    // Frontier count per chunk so we can unload when a chunk has no queued work
     private final HashMap<ChunkKey, Integer> chunkFrontierCount = new HashMap<>();
 
-    // chunks loaded by plugin
+    // Track chunks loaded by this plugin
     private final HashSet<ChunkKey> pluginLoadedChunks = new HashSet<>();
     private final HashMap<ChunkKey, Long> unloadAfterMs = new HashMap<>();
 
-    // infected chunks for damage effect
+    // Track chunks that have been infected (used for poison dirt effect)
     private final HashSet<ChunkKey> infectedChunks = new HashSet<>();
 
     private BukkitTask spreadTask;
@@ -46,8 +46,14 @@ public final class InfectionService {
     }
 
     public void shutdown() {
-        if (spreadTask != null) { spreadTask.cancel(); spreadTask = null; }
-        if (damageTask != null) { damageTask.cancel(); damageTask = null; }
+        if (spreadTask != null) {
+            spreadTask.cancel();
+            spreadTask = null;
+        }
+        if (damageTask != null) {
+            damageTask.cancel();
+            damageTask = null;
+        }
 
         frontier.clear();
         seen.clear();
@@ -55,10 +61,6 @@ public final class InfectionService {
         pluginLoadedChunks.clear();
         unloadAfterMs.clear();
         infectedChunks.clear();
-    }
-
-    public boolean isEnabled() {
-        return config.isEnabled();
     }
 
     public int frontierSize() {
@@ -69,17 +71,17 @@ public final class InfectionService {
         return infectedChunks.size();
     }
 
-    public void setEnabled(boolean enabled) {
-        config.setEnabled(enabled);
-        config.save();
-    }
-
     public void seedAt(Block seed) {
-        if (seed == null || seed.getWorld() == null) return;
-        // Infect the seed block (unless excluded)
-        tryInfect(seed);
+        if (seed == null) return;
+        World w = seed.getWorld();
+        if (w == null) return;
+
+        // try to infect seed (respecting rules)
+        if (tryInfect(seed)) {
+            infectedChunks.add(new ChunkKey(w.getUID(), seed.getX() >> 4, seed.getZ() >> 4));
+        }
+
         enqueue(seed);
-        // enabling is handled outside (GUI/command), but seeding should make it "ready"
     }
 
     public void restartSpreadTask() {
@@ -93,7 +95,6 @@ public final class InfectionService {
     private void ensureSpreadTaskRunning() {
         if (spreadTask != null) return;
 
-        // use config cycleTicks dynamically by recreating task when changed
         spreadTask = plugin.getServer().getScheduler().runTaskTimer(plugin, () -> {
             try {
                 if (config.isEnabled()) {
@@ -155,44 +156,11 @@ public final class InfectionService {
         int budget = config.getInfectionsPerCycle();
         int converted = 0;
 
-        while (converted < budget && !frontier.isEmpty()) {
-            BlockKey key = frontier.pollFirst();
-            if (key == null) break;
-
-            World world = Bukkit.getWorld(key.worldId);
-            if (world == null) {
-                decrementFrontierCount(key);
-                continue;
-            }
-
-            int cx = key.x >> 4;
-            int cz = key.z >> 4;
-
-            ensureChunkLoaded(world, cx, cz);
-
-            Block b = world.getBlockAt(key.x, key.y, key.z);
-
-            // Process neighbors regardless of whether this block was convertible
-            // (so spread can flow around containers, etc.)
-            spreadFrom(world, b);
-
-            decrementFrontierCount(key);
-
-            // Infecting happens in neighbor step; we count conversions there
-            // But we still keep a budget by tracking converted as we go
-            // -> we do this with a shared counter stored in a field? simplest: convert inline in spreadFrom with return count
-            // We'll do convert counting inside spreadFrom and return how many converted.
-            // (But spreadFrom currently void; so do local approach: convert inside loop below.)
-            // To keep it straightforward, do conversion in spreadFrom method that increments a mutable counter holder.
-            // We'll call an overload that takes a holder.
-            // (We already called spreadFrom without conversion. Fix: call correct method below.)
-        }
-
-        // The above loop called the wrong spreadFrom; we want conversion budget.
-        // To keep code simple and correct, we’ll do the conversion loop with the correct method:
-
+        // Safety to prevent runaway loops if something weird happens
         int safety = 0;
-        while (converted < budget && !frontier.isEmpty() && safety++ < budget * 4) {
+        int safetyLimit = Math.max(10_000, budget * 20);
+
+        while (converted < budget && !frontier.isEmpty() && safety++ < safetyLimit) {
             BlockKey key = frontier.pollFirst();
             if (key == null) break;
 
@@ -204,6 +172,7 @@ public final class InfectionService {
 
             int cx = key.x >> 4;
             int cz = key.z >> 4;
+
             ensureChunkLoaded(world, cx, cz);
 
             Block b = world.getBlockAt(key.x, key.y, key.z);
@@ -217,12 +186,11 @@ public final class InfectionService {
     }
 
     private void spreadFrom(World world, Block b, IntHolder converted, int budget) {
-        // 6-direction BFS (faces)
+        // 6-direction spread (faces)
         int x = b.getX();
         int y = b.getY();
         int z = b.getZ();
 
-        // cheap bounds check: skip neighbors below min / above max
         int minY = world.getMinHeight();
         int maxY = world.getMaxHeight() - 1;
 
@@ -241,17 +209,16 @@ public final class InfectionService {
 
             if (ny < minY || ny > maxY) continue;
 
-            // Ensure neighbor chunk loaded if needed
             int ncx = nx >> 4;
             int ncz = nz >> 4;
+
             ensureChunkLoaded(world, ncx, ncz);
 
             Block nb = world.getBlockAt(nx, ny, nz);
 
-            // Enqueue neighbor once
+            // Continue BFS regardless of whether this block is convertible
             enqueue(nb);
 
-            // Try infect neighbor
             if (tryInfect(nb)) {
                 converted.value++;
                 infectedChunks.add(new ChunkKey(world.getUID(), ncx, ncz));
@@ -268,24 +235,25 @@ public final class InfectionService {
         // Already infected
         if (type == config.getInfectionMaterial()) return false;
 
-        // Skip containers (as requested)
+        // Skip containers
         if (config.isSkipContainers()) {
             BlockState st = b.getState(false);
             if (st instanceof Container) return false;
         }
 
-        // Attempt replace
         try {
             b.setType(config.getInfectionMaterial(), false);
             return true;
         } catch (Throwable ignored) {
-            // Some blocks just can't be set (bedrock etc.)
+            // Bedrock, barriers, etc.
             return false;
         }
     }
 
     private void enqueue(Block b) {
         World w = b.getWorld();
+        if (w == null) return;
+
         BlockKey key = new BlockKey(w.getUID(), b.getX(), b.getY(), b.getZ());
         if (!seen.add(key)) return;
 
@@ -294,7 +262,7 @@ public final class InfectionService {
         ChunkKey ck = new ChunkKey(w.getUID(), b.getX() >> 4, b.getZ() >> 4);
         chunkFrontierCount.merge(ck, 1, Integer::sum);
 
-        // if we previously scheduled this chunk to unload, cancel it because work arrived again
+        // cancel pending unload because work exists again
         unloadAfterMs.remove(ck);
     }
 
@@ -306,8 +274,6 @@ public final class InfectionService {
         int next = cur - 1;
         if (next <= 0) {
             chunkFrontierCount.remove(ck);
-
-            // schedule unload if plugin loaded it
             if (pluginLoadedChunks.contains(ck)) {
                 unloadAfterMs.put(ck, System.currentTimeMillis() + config.getUnloadDelayMs());
             }
@@ -319,21 +285,18 @@ public final class InfectionService {
     private void ensureChunkLoaded(World world, int cx, int cz) {
         ChunkKey ck = new ChunkKey(world.getUID(), cx, cz);
 
-        boolean wasLoaded = world.isChunkLoaded(cx, cz);
-        if (!wasLoaded) {
-            // load chunk (sync)
+        if (!world.isChunkLoaded(cx, cz)) {
             world.getChunkAt(cx, cz).load(true);
             pluginLoadedChunks.add(ck);
         }
     }
 
     private void runUnloadHousekeeping() {
-        if (pluginLoadedChunks.isEmpty()) return;
         if (unloadAfterMs.isEmpty()) return;
 
         long now = System.currentTimeMillis();
-
         Iterator<Map.Entry<ChunkKey, Long>> it = unloadAfterMs.entrySet().iterator();
+
         while (it.hasNext()) {
             Map.Entry<ChunkKey, Long> e = it.next();
             ChunkKey ck = e.getKey();
@@ -341,7 +304,7 @@ public final class InfectionService {
 
             if (now < when) continue;
 
-            // if new work appeared, skip
+            // new work appeared
             if (chunkFrontierCount.containsKey(ck)) {
                 it.remove();
                 continue;
@@ -354,7 +317,6 @@ public final class InfectionService {
                 continue;
             }
 
-            // Only unload if still loaded
             if (w.isChunkLoaded(ck.chunkX, ck.chunkZ)) {
                 unloadChunkCompat(w, ck.chunkX, ck.chunkZ);
             }
@@ -365,7 +327,7 @@ public final class InfectionService {
     }
 
     private void unloadChunkCompat(World world, int cx, int cz) {
-        // Prefer Paper's unloadChunkRequest if present, else fall back
+        // Prefer Paper unloadChunkRequest if available, else fallback
         try {
             Method m = world.getClass().getMethod("unloadChunkRequest", int.class, int.class);
             m.invoke(world, cx, cz);
@@ -395,13 +357,15 @@ public final class InfectionService {
             this.chunkZ = chunkZ;
         }
 
-        @Override public boolean equals(Object o) {
+        @Override
+        public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof ChunkKey other)) return false;
             return chunkX == other.chunkX && chunkZ == other.chunkZ && worldId.equals(other.worldId);
         }
 
-        @Override public int hashCode() {
+        @Override
+        public int hashCode() {
             int r = worldId.hashCode();
             r = 31 * r + chunkX;
             r = 31 * r + chunkZ;
@@ -420,13 +384,15 @@ public final class InfectionService {
             this.z = z;
         }
 
-        @Override public boolean equals(Object o) {
+        @Override
+        public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof BlockKey other)) return false;
             return x == other.x && y == other.y && z == other.z && worldId.equals(other.worldId);
         }
 
-        @Override public int hashCode() {
+        @Override
+        public int hashCode() {
             int r = worldId.hashCode();
             r = 31 * r + x;
             r = 31 * r + y;
