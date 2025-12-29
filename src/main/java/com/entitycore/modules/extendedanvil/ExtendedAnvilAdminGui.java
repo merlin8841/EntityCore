@@ -3,7 +3,6 @@ package com.entitycore.modules.extendedanvil;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.Sound;
-import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
@@ -11,10 +10,9 @@ import org.bukkit.inventory.*;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.plugin.java.JavaPlugin;
 
-import java.util.List;
-
 public final class ExtendedAnvilAdminGui {
 
+    public static final String TITLE = "EA Admin";
     private static final int SIZE = 27;
 
     private static final int SLOT_DEBUG = 10;
@@ -49,7 +47,7 @@ public final class ExtendedAnvilAdminGui {
 
     public static void open(Player player, JavaPlugin plugin, ExtendedAnvilConfig config, ExtendedAnvilService service) {
         Holder holder = new Holder(player);
-        Inventory inv = Bukkit.createInventory(holder, SIZE, "EA Admin");
+        Inventory inv = Bukkit.createInventory(holder, SIZE, TITLE);
         holder.setInventory(inv);
 
         build(inv, config);
@@ -65,7 +63,7 @@ public final class ExtendedAnvilAdminGui {
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
         inv.setItem(SLOT_DEBUG, named(Material.REDSTONE_TORCH, "Debug: " + (config.debug() ? "ON" : "OFF")));
-        inv.setItem(SLOT_COSTS, named(Material.EXPERIENCE_BOTTLE, "Costs & Returns"));
+        inv.setItem(SLOT_COSTS, named(Material.ANVIL, "Costs (Enchant / Disenchant / Repair)"));
         inv.setItem(SLOT_CAPS, named(Material.ENCHANTED_BOOK, "Enchant Caps"));
         inv.setItem(SLOT_PRIORITY, named(Material.HOPPER, "Disenchant Priority"));
         inv.setItem(SLOT_CLOSE, named(Material.BARRIER, "Close"));
@@ -82,36 +80,41 @@ public final class ExtendedAnvilAdminGui {
         event.setCancelled(true);
 
         int slot = event.getRawSlot();
+
         if (slot == SLOT_CLOSE) {
             player.closeInventory();
             return;
         }
 
         if (slot == SLOT_DEBUG) {
-            config.setDebug(!config.debug());
+            boolean next = !config.debug();
+            config.setDebug(next);
             config.save();
             build(event.getInventory(), config);
             player.playSound(player.getLocation(), Sound.UI_BUTTON_CLICK, 1f, 1f);
+            plugin.getLogger().info("[ExtendedAnvil] Debug set to " + (next ? "ON" : "OFF") + " by " + player.getName());
             return;
         }
 
         if (slot == SLOT_COSTS) {
             ExtendedAnvilCostsGui.open(player, plugin, config);
+            if (config.debug()) plugin.getLogger().info("[ExtendedAnvil][DEBUG] Opened Costs & Returns for " + player.getName());
             return;
         }
 
         if (slot == SLOT_CAPS) {
             ExtendedAnvilCapsGui.open(player, plugin, config);
+            if (config.debug()) plugin.getLogger().info("[ExtendedAnvil][DEBUG] Opened Enchant Caps for " + player.getName());
             return;
         }
 
         if (slot == SLOT_PRIORITY) {
             ExtendedAnvilPriorityGui.open(player, plugin, config);
+            if (config.debug()) plugin.getLogger().info("[ExtendedAnvil][DEBUG] Opened Disenchant Priority for " + player.getName());
         }
     }
 
     public static void handleClose(Player player, InventoryCloseEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        // no-op
         if (config.debug()) {
             plugin.getLogger().info("[ExtendedAnvil][DEBUG] Closed EA Admin for " + player.getName());
         }
