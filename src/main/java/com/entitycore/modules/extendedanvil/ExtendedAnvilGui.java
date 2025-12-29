@@ -130,7 +130,7 @@ public final class ExtendedAnvilGui {
         if (rawSlot == SLOT_ENCHANT_BOOK) {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 ItemStack inSlot = top.getItem(SLOT_ENCHANT_BOOK);
-                if (inSlot != null && !service.isEnchantedBook(inSlot)) {
+                if (inSlot != null && inSlot.getType() != Material.ENCHANTED_BOOK) {
                     top.setItem(SLOT_ENCHANT_BOOK, null);
                     player.getInventory().addItem(inSlot);
                     player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
@@ -143,7 +143,7 @@ public final class ExtendedAnvilGui {
         if (rawSlot == SLOT_DISENCHANT_BOOKS) {
             Bukkit.getScheduler().runTask(plugin, () -> {
                 ItemStack inSlot = top.getItem(SLOT_DISENCHANT_BOOKS);
-                if (inSlot != null && !service.isEmptyBook(inSlot)) {
+                if (inSlot != null && inSlot.getType() != Material.BOOK) {
                     top.setItem(SLOT_DISENCHANT_BOOKS, null);
                     player.getInventory().addItem(inSlot);
                     player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
@@ -189,11 +189,12 @@ public final class ExtendedAnvilGui {
     }
 
     private static void refreshPreview(Player player, Inventory top, ExtendedAnvilConfig config, ExtendedAnvilService service) {
+        // ENCHANT preview via mergeInto(item, book)
         ItemStack item = top.getItem(SLOT_ENCHANT_ITEM);
         ItemStack book = top.getItem(SLOT_ENCHANT_BOOK);
 
-        if (item != null && book != null && service.isEnchantedBook(book)) {
-            ExtendedAnvilService.ApplyEnchantResult r = service.applyEnchantedBook(item, book);
+        if (item != null && book != null && book.getType() == Material.ENCHANTED_BOOK) {
+            ExtendedAnvilService.MergeResult r = service.mergeInto(item, book);
             if (r.ok() && r.newItem() != null) {
                 ItemStack preview = r.newItem().clone();
                 ItemMeta meta = preview.getItemMeta();
@@ -212,11 +213,12 @@ public final class ExtendedAnvilGui {
             top.setItem(SLOT_ENCHANT_RESULT, named(Material.BLACK_STAINED_GLASS_PANE, "Result (read-only)"));
         }
 
+        // DISENCHANT preview (unchanged)
         ItemStack disItem = top.getItem(SLOT_DISENCHANT_ITEM);
         ItemStack books = top.getItem(SLOT_DISENCHANT_BOOKS);
         int bookCount = books == null ? 0 : books.getAmount();
 
-        if (disItem != null && bookCount >= 1 && service.isEmptyBook(books)) {
+        if (disItem != null && bookCount >= 1 && books != null && books.getType() == Material.BOOK) {
             ExtendedAnvilService.DisenchantResult r;
             if (bookCount == 1) {
                 r = service.disenchantAllToOneBook(disItem, books);
@@ -228,9 +230,7 @@ public final class ExtendedAnvilGui {
                 ItemStack preview = r.outBook().clone();
                 ItemMeta meta = preview.getItemMeta();
                 if (meta != null) {
-                    meta.setLore(List.of(
-                        "Return: " + r.returnLevels() + " levels"
-                    ));
+                    meta.setLore(List.of("Return: " + r.returnLevels() + " levels"));
                     preview.setItemMeta(meta);
                 }
                 top.setItem(SLOT_DISENCHANT_RESULT, preview);
@@ -246,7 +246,7 @@ public final class ExtendedAnvilGui {
         ItemStack item = top.getItem(SLOT_ENCHANT_ITEM);
         ItemStack book = top.getItem(SLOT_ENCHANT_BOOK);
 
-        if (item == null || book == null || !service.isEnchantedBook(book)) {
+        if (item == null || book == null || book.getType() != Material.ENCHANTED_BOOK) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             if (config.debug()) {
                 plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant failed (missing item/book) player=" + player.getName());
@@ -254,14 +254,15 @@ public final class ExtendedAnvilGui {
             return;
         }
 
-        ExtendedAnvilService.ApplyEnchantResult r = service.applyEnchantedBook(item, book);
+        ExtendedAnvilService.MergeResult r = service.mergeInto(item, book);
         if (!r.ok() || r.newItem() == null) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             if (config.debug()) {
                 plugin.getLogger().info("[ExtendedAnvil][DEBUG] Enchant failed player=" + player.getName()
                     + " reason=" + (r.error() == null ? "unknown" : r.error())
                     + " item=" + summarizeItem(item)
-                    + " book=" + summarizeItem(book));
+                    + " book=" + summarizeItem(book)
+                    + " bookEnchants=" + summarizeBookEnchants(service, book));
             }
             return;
         }
@@ -302,7 +303,7 @@ public final class ExtendedAnvilGui {
         ItemStack item = top.getItem(SLOT_DISENCHANT_ITEM);
         ItemStack books = top.getItem(SLOT_DISENCHANT_BOOKS);
 
-        if (item == null || books == null || !service.isEmptyBook(books) || books.getAmount() < 1) {
+        if (item == null || books == null || books.getType() != Material.BOOK || books.getAmount() < 1) {
             player.playSound(player.getLocation(), Sound.ENTITY_VILLAGER_NO, 1f, 1f);
             if (config.debug()) {
                 plugin.getLogger().info("[ExtendedAnvil][DEBUG] Disenchant failed (missing item/books) player=" + player.getName());
