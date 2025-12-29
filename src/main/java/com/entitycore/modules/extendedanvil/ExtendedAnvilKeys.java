@@ -20,6 +20,11 @@ public final class ExtendedAnvilKeys {
         return new NamespacedKey(plugin, "ea_rem_" + safeKey(ench));
     }
 
+    /** Per-item repair count (drives repair cost multiplier). */
+    public NamespacedKey repairCountKey() {
+        return new NamespacedKey(plugin, "ea_repair_count");
+    }
+
     private static String safeKey(Enchantment ench) {
         if (ench == null || ench.getKey() == null) return "unknown";
         // namespace:key -> namespace__key
