@@ -258,8 +258,9 @@ public final class ExtendedAnvilService {
         int newDamage = Math.max(0, max - newRemaining);
         outDmg.setDamage(newDamage);
 
-        // merge enchants with "keep max" + conflict blocking
         out.setItemMeta((ItemMeta) outDmg);
+
+        // merge enchants with "keep max" + conflict blocking
         MergeResult merged = mergeInto(out, otherSameType);
         if (merged.ok() && merged.newItem() != null) {
             out = merged.newItem();
@@ -279,7 +280,11 @@ public final class ExtendedAnvilService {
         if (n.equals("BOW") || n.equals("FISHING_ROD")) return Material.STRING;
         if (n.equals("SHEARS") || n.equals("FLINT_AND_STEEL")) return Material.IRON_INGOT;
 
-        if (n.equals("TURTLE_HELMET")) return Material.SCUTE;
+        // SCUTE doesn't exist on some older APIs -> safe lookup
+        if (n.equals("TURTLE_HELMET")) {
+            Material scute = Material.matchMaterial("SCUTE");
+            return scute; // may be null on very old jars
+        }
 
         if (n.startsWith("NETHERITE_")) return Material.NETHERITE_INGOT;
         if (n.startsWith("DIAMOND_")) return Material.DIAMOND;
