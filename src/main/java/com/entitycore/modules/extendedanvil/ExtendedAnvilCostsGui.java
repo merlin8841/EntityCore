@@ -14,6 +14,7 @@ import java.util.List;
 
 public final class ExtendedAnvilCostsGui {
 
+    public static final String TITLE = "EA Costs & Returns";
     private static final int SIZE = 27;
 
     private static final int SLOT_BASE_COST = 10;
@@ -23,54 +24,55 @@ public final class ExtendedAnvilCostsGui {
     private static final int SLOT_RET_SECOND = 16;
     private static final int SLOT_RET_THIRD = 18;
 
-    // Repair settings (new)
-    private static final int SLOT_REPAIR_BASE_LEVELS = 19;
-    private static final int SLOT_REPAIR_BASE_MULT = 20;
-    private static final int SLOT_REPAIR_INC = 21;
-
     private static final int SLOT_BACK = 22;
+
+    // Touch controls
+    private static final int SLOT_MODE_PAPER = 4;
+    private static final int SLOT_PLUS_1 = 2;
+    private static final int SLOT_MINUS_1 = 6;
+    private static final int SLOT_PLUS_10 = 11;
+    private static final int SLOT_MINUS_10 = 15;
 
     private ExtendedAnvilCostsGui() {}
 
     public static void open(Player player, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        Inventory inv = Bukkit.createInventory(new ExtendedAnvilAdminGui.Holder(player), SIZE, "EA Costs & Returns");
-        build(inv, config);
+        Inventory inv = Bukkit.createInventory(new ExtendedAnvilAdminGui.Holder(player), SIZE, TITLE);
+        build(inv, config, 1);
         player.openInventory(inv);
     }
 
-    private static void build(Inventory inv, ExtendedAnvilConfig config) {
+    private static void build(Inventory inv, ExtendedAnvilConfig config, int deltaMode) {
+        // deltaMode: 1, -1, 10, -10 (for ints). Percents always +/-0.05 based on sign.
         ItemStack filler = named(Material.GRAY_STAINED_GLASS_PANE, " ");
         for (int i = 0; i < SIZE; i++) inv.setItem(i, filler);
 
         inv.setItem(SLOT_BASE_COST, lore(Material.EXPERIENCE_BOTTLE, "Enchant base cost / level",
-            List.of("Value: " + config.enchantBaseCostPerLevel(), "Left +1, Right -1, Shift +10/-10")));
+            List.of("Value: " + config.enchantBaseCostPerLevel(), "Tap this after setting delta")));
 
         inv.setItem(SLOT_ADD_MULT, lore(Material.ANVIL, "Enchant add-count multiplier",
-            List.of("Value: " + config.enchantAddCountMultiplier(), "Left +1, Right -1, Shift +10/-10")));
+            List.of("Value: " + config.enchantAddCountMultiplier(), "Tap this after setting delta")));
 
         inv.setItem(SLOT_RET_FIRST, lore(Material.EMERALD, "Disenchant return % (first time)",
-            List.of("Value: " + pct(config.firstReturnPercent()), "Left +0.05, Right -0.05")));
+            List.of("Value: " + pct(config.firstReturnPercent()), "Uses +/- 0.05")));
 
         inv.setItem(SLOT_RET_SECOND, lore(Material.GOLD_INGOT, "Disenchant return % (second same enchant)",
-            List.of("Value: " + pct(config.secondSameEnchantReturnPercent()), "Left +0.05, Right -0.05")));
+            List.of("Value: " + pct(config.secondSameEnchantReturnPercent()), "Uses +/- 0.05")));
 
         inv.setItem(SLOT_RET_THIRD, lore(Material.REDSTONE, "Disenchant return % (third+ same enchant)",
-            List.of("Value: " + pct(config.thirdPlusSameEnchantReturnPercent()), "Left +0.05, Right -0.05")));
-
-        inv.setItem(SLOT_REPAIR_BASE_LEVELS, lore(Material.IRON_INGOT, "Repair base levels",
-            List.of("Value: " + config.repairBaseLevels(), "Cost = ceil(baseLevels * multiplier)", "Left +1, Right -1, Shift +10/-10")));
-
-        inv.setItem(SLOT_REPAIR_BASE_MULT, lore(Material.ANVIL, "Repair base multiplier",
-            List.of("Value: " + trim(config.repairBaseMultiplier()), "multiplier = base + (repairs * inc)", "Left +0.5, Right -0.5")));
-
-        inv.setItem(SLOT_REPAIR_INC, lore(Material.REDSTONE, "Repair increment per repair",
-            List.of("Value: " + trim(config.repairIncrementPerRepair()), "multiplier += inc each repair", "Left +0.5, Right -0.5")));
+            List.of("Value: " + pct(config.thirdPlusSameEnchantReturnPercent()), "Uses +/- 0.05")));
 
         inv.setItem(SLOT_BACK, named(Material.ARROW, "Back"));
+
+        // Touch delta buttons
+        inv.setItem(SLOT_PLUS_1, named(Material.LIME_DYE, "Delta: +1"));
+        inv.setItem(SLOT_MINUS_1, named(Material.RED_DYE, "Delta: -1"));
+        inv.setItem(SLOT_PLUS_10, named(Material.LIME_DYE, "Delta: +10"));
+        inv.setItem(SLOT_MINUS_10, named(Material.RED_DYE, "Delta: -10"));
+        inv.setItem(SLOT_MODE_PAPER, lore(Material.PAPER, "Current Delta", List.of(String.valueOf(deltaMode))));
     }
 
     public static void handleClick(Player player, InventoryClickEvent event, JavaPlugin plugin, ExtendedAnvilConfig config) {
-        if (!event.getView().getTitle().equals("EA Costs & Returns")) return;
+        if (!event.getView().getTitle().equals(TITLE)) return;
 
         if (!player.hasPermission("entitycore.extendedanvil.admin")) {
             event.setCancelled(true);
@@ -79,107 +81,78 @@ public final class ExtendedAnvilCostsGui {
 
         event.setCancelled(true);
 
+        Inventory top = event.getView().getTopInventory();
+        int deltaMode = readDelta(top);
         int slot = event.getRawSlot();
-        boolean shift = event.isShiftClick();
-        boolean left = event.isLeftClick();
-        boolean right = event.isRightClick();
 
         if (slot == SLOT_BACK) {
             ExtendedAnvilAdminGui.open(player, plugin, config, new ExtendedAnvilService(plugin, config));
+            click(player);
             return;
         }
 
+        // Touch delta buttons
+        if (slot == SLOT_PLUS_1) { build(top, config, 1); click(player); return; }
+        if (slot == SLOT_MINUS_1) { build(top, config, -1); click(player); return; }
+        if (slot == SLOT_PLUS_10) { build(top, config, 10); click(player); return; }
+        if (slot == SLOT_MINUS_10) { build(top, config, -10); click(player); return; }
+
         if (slot == SLOT_BASE_COST) {
-            int delta = shift ? 10 : 1;
-            int v = config.enchantBaseCostPerLevel();
-            if (left) v += delta;
-            if (right) v -= delta;
+            int v = config.enchantBaseCostPerLevel() + deltaMode;
             config.setEnchantBaseCostPerLevel(v);
             config.save();
-            build(event.getInventory(), config);
+            build(top, config, deltaMode);
             click(player);
             return;
         }
 
         if (slot == SLOT_ADD_MULT) {
-            int delta = shift ? 10 : 1;
-            int v = config.enchantAddCountMultiplier();
-            if (left) v += delta;
-            if (right) v -= delta;
+            int v = config.enchantAddCountMultiplier() + deltaMode;
             config.setEnchantAddCountMultiplier(v);
             config.save();
-            build(event.getInventory(), config);
+            build(top, config, deltaMode);
             click(player);
             return;
         }
 
+        // Percents: only use sign of deltaMode (+/-)
+        double step = (deltaMode >= 0) ? 0.05 : -0.05;
+
         if (slot == SLOT_RET_FIRST) {
-            config.setFirstReturnPercent(bumpPct(config.firstReturnPercent(), left, right));
+            config.setFirstReturnPercent(clamp01(config.firstReturnPercent() + step));
             config.save();
-            build(event.getInventory(), config);
+            build(top, config, deltaMode);
             click(player);
             return;
         }
 
         if (slot == SLOT_RET_SECOND) {
-            config.setSecondSameEnchantReturnPercent(bumpPct(config.secondSameEnchantReturnPercent(), left, right));
+            config.setSecondSameEnchantReturnPercent(clamp01(config.secondSameEnchantReturnPercent() + step));
             config.save();
-            build(event.getInventory(), config);
+            build(top, config, deltaMode);
             click(player);
             return;
         }
 
         if (slot == SLOT_RET_THIRD) {
-            config.setThirdPlusSameEnchantReturnPercent(bumpPct(config.thirdPlusSameEnchantReturnPercent(), left, right));
+            config.setThirdPlusSameEnchantReturnPercent(clamp01(config.thirdPlusSameEnchantReturnPercent() + step));
             config.save();
-            build(event.getInventory(), config);
-            click(player);
-            return;
-        }
-
-        if (slot == SLOT_REPAIR_BASE_LEVELS) {
-            int delta = shift ? 10 : 1;
-            int v = config.repairBaseLevels();
-            if (left) v += delta;
-            if (right) v -= delta;
-            config.setRepairBaseLevels(v);
-            config.save();
-            build(event.getInventory(), config);
-            click(player);
-            return;
-        }
-
-        if (slot == SLOT_REPAIR_BASE_MULT) {
-            double v = config.repairBaseMultiplier();
-            if (left) v += 0.5;
-            if (right) v -= 0.5;
-            if (v < 0) v = 0;
-            config.setRepairBaseMultiplier(v);
-            config.save();
-            build(event.getInventory(), config);
-            click(player);
-            return;
-        }
-
-        if (slot == SLOT_REPAIR_INC) {
-            double v = config.repairIncrementPerRepair();
-            if (left) v += 0.5;
-            if (right) v -= 0.5;
-            if (v < 0) v = 0;
-            config.setRepairIncrementPerRepair(v);
-            config.save();
-            build(event.getInventory(), config);
+            build(top, config, deltaMode);
             click(player);
             return;
         }
     }
 
-    private static double bumpPct(double v, boolean left, boolean right) {
-        if (left) v += 0.05;
-        if (right) v -= 0.05;
-        if (v < 0) v = 0;
-        if (v > 1) v = 1;
-        return v;
+    private static int readDelta(Inventory inv) {
+        ItemStack paper = inv.getItem(SLOT_MODE_PAPER);
+        if (paper == null) return 1;
+        ItemMeta meta = paper.getItemMeta();
+        if (meta == null || meta.getLore() == null || meta.getLore().isEmpty()) return 1;
+        try {
+            return Integer.parseInt(meta.getLore().get(0));
+        } catch (Exception ignored) {
+            return 1;
+        }
     }
 
     private static void click(Player p) {
@@ -190,10 +163,10 @@ public final class ExtendedAnvilCostsGui {
         return Math.round(v * 100.0) + "%";
     }
 
-    private static String trim(double v) {
-        // simple pretty formatting for 0.5 steps
-        if (Math.abs(v - Math.round(v)) < 1e-9) return String.valueOf((int) Math.round(v));
-        return String.valueOf(v);
+    private static double clamp01(double v) {
+        if (v < 0) return 0;
+        if (v > 1) return 1;
+        return v;
     }
 
     private static ItemStack named(Material mat, String name) {
