@@ -4,7 +4,7 @@ import com.entitycore.modules.questbuilder.action.QuestActionExecutor;
 import com.entitycore.modules.questbuilder.model.QuestDraft;
 import com.entitycore.modules.questbuilder.script.QuestScriptRegistry;
 import com.entitycore.modules.questbuilder.storage.QuestStorage;
-import com.entitycore.modules.questbuilder.trigger.QbTriggerType;
+import com.entitycore.modules.questbuilder.trigger.QuestTriggerType;
 import org.bukkit.Location;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -27,7 +27,7 @@ public final class QuestInteractTriggerListener implements Listener {
     public void onInteract(PlayerInteractEvent e) {
         if (e.getClickedBlock() == null) return;
 
-        QbTriggerType type = mapAction(e.getAction());
+        QuestTriggerType type = mapAction(e.getAction());
         if (type == null) return;
 
         var mat = e.getClickedBlock().getType();
@@ -53,9 +53,9 @@ public final class QuestInteractTriggerListener implements Listener {
         }
     }
 
-    private QbTriggerType mapAction(Action a) {
-        if (a == Action.RIGHT_CLICK_BLOCK) return QbTriggerType.RIGHT_CLICK_BLOCK;
-        if (a == Action.PHYSICAL) return QbTriggerType.PHYSICAL_TRIGGER;
+    private QuestTriggerType mapAction(Action a) {
+        if (a == Action.RIGHT_CLICK_BLOCK) return QuestTriggerType.RIGHT_CLICK_BLOCK;
+        if (a == Action.PHYSICAL) return QuestTriggerType.PHYSICAL_TRIGGER;
         return null;
     }
 
