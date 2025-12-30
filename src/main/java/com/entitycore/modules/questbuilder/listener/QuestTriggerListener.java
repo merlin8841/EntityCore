@@ -15,8 +15,14 @@ public final class QuestTriggerListener implements Listener {
 
     @EventHandler
     public void onMove(PlayerMoveEvent e) {
+        if (e.getTo() == null) return;
+
+        // Only evaluate when changing blocks (reduces spam)
         if (e.getFrom().getBlockX() == e.getTo().getBlockX()
-                && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) return;
+                && e.getFrom().getBlockY() == e.getTo().getBlockY()
+                && e.getFrom().getBlockZ() == e.getTo().getBlockZ()) {
+            return;
+        }
 
         engine.handleMove(e.getPlayer(), e.getTo());
     }
