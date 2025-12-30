@@ -9,15 +9,41 @@ public final class QuestActionExecutor {
 
     private QuestActionExecutor() {}
 
-    public static void execute(Player player, List<String> commands) {
-        for (String raw : commands) {
-            String cmd = raw.replace("{player}", player.getName());
+    /**
+     * Action formats (portable):
+     * - "player:<command>"   -> run as player
+     * - "console:<command>"  -> run as console
+     * - "bq:<eventId>"       -> runs: /q event <player> <eventId> (BetonQuest via command)
+     *
+     * Placeholders:
+     * - {player}
+     */
+    public static void execute(Player player, List<String> actions) {
+        for (String raw : actions) {
+            if (raw == null || raw.isBlank()) continue;
 
-            if (cmd.startsWith("player:")) {
-                player.performCommand(cmd.substring("player:".length()).trim());
-            } else {
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
+            String line = raw.replace("{player}", player.getName()).trim();
+
+            if (line.startsWith("player:")) {
+                player.performCommand(line.substring("player:".length()).trim());
+                continue;
             }
+
+            if (line.startsWith("console:")) {
+                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), line.substring("console:".length()).trim());
+                continue;
+            }
+
+            if (line.startsWith("bq:")) {
+                String eventId = line.substring("bq:".length()).trim();
+                if (!eventId.isEmpty()) {
+                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "q event " + player.getName() + " " + eventId);
+                }
+                continue;
+            }
+
+            // Default: console command
+            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), line);
         }
     }
 }
