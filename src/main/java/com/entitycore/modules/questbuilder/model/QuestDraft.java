@@ -43,6 +43,8 @@ public final class QuestDraft {
     public void preview(Player player) {
         if (!isAreaComplete()) return;
 
+        Particle particle = resolvePreviewParticle();
+
         int minX = Math.min(pos1.getBlockX(), pos2.getBlockX());
         int maxX = Math.max(pos1.getBlockX(), pos2.getBlockX());
         int minZ = Math.min(pos1.getBlockZ(), pos2.getBlockZ());
@@ -50,12 +52,41 @@ public final class QuestDraft {
         int y = player.getLocation().getBlockY();
 
         for (int x = minX; x <= maxX; x++) {
-            world.spawnParticle(Particle.VILLAGER_HAPPY, x, y, minZ, 1);
-            world.spawnParticle(Particle.VILLAGER_HAPPY, x, y, maxZ, 1);
+            world.spawnParticle(particle, x, y, minZ, 1);
+            world.spawnParticle(particle, x, y, maxZ, 1);
         }
         for (int z = minZ; z <= maxZ; z++) {
-            world.spawnParticle(Particle.VILLAGER_HAPPY, minX, y, z, 1);
-            world.spawnParticle(Particle.VILLAGER_HAPPY, maxX, y, z, 1);
+            world.spawnParticle(particle, minX, y, z, 1);
+            world.spawnParticle(particle, maxX, y, z, 1);
+        }
+    }
+
+    /**
+     * Resolves a preview particle in a version-safe way.
+     * Some APIs use VILLAGER_HAPPY, others use HAPPY_VILLAGER.
+     * Avoids compile-time references that fail on older enums.
+     */
+    private static Particle resolvePreviewParticle() {
+        // Prefer the "villager happy" style if present.
+        Particle p = tryParticle("VILLAGER_HAPPY");
+        if (p != null) return p;
+
+        p = tryParticle("HAPPY_VILLAGER");
+        if (p != null) return p;
+
+        // Very safe fallback that exists on lots of versions:
+        p = tryParticle("CRIT");
+        if (p != null) return p;
+
+        // Absolute last resort: first enum value (should never be needed, but guarantees no crash)
+        return Particle.values()[0];
+    }
+
+    private static Particle tryParticle(String name) {
+        try {
+            return Particle.valueOf(name);
+        } catch (IllegalArgumentException ignored) {
+            return null;
         }
     }
 }
