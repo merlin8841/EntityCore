@@ -7,12 +7,14 @@ import java.util.List;
 
 public final class QuestActionExecutor {
 
+    private QuestActionExecutor() {}
+
     public static void execute(Player player, List<String> commands) {
         for (String raw : commands) {
             String cmd = raw.replace("{player}", player.getName());
 
             if (cmd.startsWith("player:")) {
-                player.performCommand(cmd.substring(7));
+                player.performCommand(cmd.substring("player:".length()).trim());
             } else {
                 Bukkit.dispatchCommand(Bukkit.getConsoleSender(), cmd);
             }
