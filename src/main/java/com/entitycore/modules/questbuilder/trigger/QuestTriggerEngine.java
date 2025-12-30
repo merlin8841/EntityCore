@@ -30,17 +30,17 @@ public final class QuestTriggerEngine {
             if (draft.contains(to)) {
                 now.add(draft.id);
                 if (!prev.contains(draft.id)) {
-                    fire(player, draft.id, QuestTriggerType.ENTER_AREA);
+                    fire(player, draft.id, QbTriggerType.ENTER_AREA);
                 }
             } else if (prev.contains(draft.id)) {
-                fire(player, draft.id, QuestTriggerType.EXIT_AREA);
+                fire(player, draft.id, QbTriggerType.EXIT_AREA);
             }
         }
 
         insideAreas.put(player.getUniqueId(), now);
     }
 
-    private void fire(Player player, String areaId, QuestTriggerType type) {
+    private void fire(Player player, String areaId, QbTriggerType type) {
         Bukkit.dispatchCommand(
                 Bukkit.getConsoleSender(),
                 "entitycore-qb-trigger " + areaId + " " + type.name() + " " + player.getName()
