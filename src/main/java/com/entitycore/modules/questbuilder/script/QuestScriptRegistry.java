@@ -1,6 +1,6 @@
 package com.entitycore.modules.questbuilder.script;
 
-import com.entitycore.modules.questbuilder.trigger.QbTriggerType;
+import com.entitycore.modules.questbuilder.trigger.QuestTriggerType;
 import org.bukkit.Material;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -72,7 +72,7 @@ public final class QuestScriptRegistry {
         }
     }
 
-    public List<String> getActionsForAreaTrigger(String areaId, QbTriggerType type) {
+    public List<String> getActionsForAreaTrigger(String areaId, QuestTriggerType type) {
         if (areaId == null || type == null) return List.of();
         String path = "areas." + areaId + "." + type.name() + ".actions";
         List<String> list = cfg.getStringList(path);
@@ -88,7 +88,7 @@ public final class QuestScriptRegistry {
             ConfigurationSection t = sec.getConfigurationSection(key);
             if (t == null) continue;
 
-            QbTriggerType type = QbTriggerType.from(t.getString("type"));
+            QuestTriggerType type = QuestTriggerType.from(t.getString("type"));
             if (type == null) continue;
 
             String blockName = t.getString("block");
@@ -116,12 +116,12 @@ public final class QuestScriptRegistry {
 
     public static final class InteractionTrigger {
         public final String id;
-        public final QbTriggerType type;
+        public final QuestTriggerType type;
         public final Material block;
         public final String requireArea;
         public final List<String> actions;
 
-        public InteractionTrigger(String id, QbTriggerType type, Material block, String requireArea, List<String> actions) {
+        public InteractionTrigger(String id, QuestTriggerType type, Material block, String requireArea, List<String> actions) {
             this.id = id;
             this.type = type;
             this.block = block;
