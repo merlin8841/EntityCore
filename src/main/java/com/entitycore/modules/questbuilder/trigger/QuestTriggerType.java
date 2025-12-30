@@ -1,6 +1,6 @@
 package com.entitycore.modules.questbuilder.trigger;
 
-public enum QbTriggerType {
+public enum QuestTriggerType {
     ENTER_AREA,
     EXIT_AREA,
 
@@ -8,10 +8,10 @@ public enum QbTriggerType {
     RIGHT_CLICK_BLOCK,
     PHYSICAL_TRIGGER;
 
-    public static QbTriggerType from(String s) {
+    public static QuestTriggerType from(String s) {
         if (s == null) return null;
         try {
-            return QbTriggerType.valueOf(s.trim().toUpperCase());
+            return QuestTriggerType.valueOf(s.trim().toUpperCase());
         } catch (Exception e) {
             return null;
         }
