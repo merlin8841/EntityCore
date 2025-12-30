@@ -25,7 +25,12 @@ public final class QuestStorage {
         return drafts.computeIfAbsent(id, k -> new QuestDraft(id, world));
     }
 
+    public Collection<QuestDraft> all() {
+        return Collections.unmodifiableCollection(drafts.values());
+    }
+
     public void load() {
+        drafts.clear();
         if (!file.exists()) return;
 
         YamlConfiguration cfg = YamlConfiguration.loadConfiguration(file);
@@ -36,9 +41,12 @@ public final class QuestStorage {
             QuestDraft d = new QuestDraft(id, world);
             d.pos1 = cfg.getVector(id + ".pos1");
             d.pos2 = cfg.getVector(id + ".pos2");
+            d.mirrorWorldGuard = cfg.getBoolean(id + ".mirror_worldguard", false);
 
             for (Object o : cfg.getList(id + ".points", List.of())) {
-                if (o instanceof Vector v) d.points.add(v);
+                if (o instanceof Vector v) {
+                    d.points.add(v);
+                }
             }
 
             drafts.put(id, d);
@@ -51,8 +59,10 @@ public final class QuestStorage {
             cfg.set(d.id + ".world", d.world.getName());
             cfg.set(d.id + ".pos1", d.pos1);
             cfg.set(d.id + ".pos2", d.pos2);
+            cfg.set(d.id + ".mirror_worldguard", d.mirrorWorldGuard);
             cfg.set(d.id + ".points", d.points);
         }
+
         try {
             cfg.save(file);
         } catch (IOException e) {
