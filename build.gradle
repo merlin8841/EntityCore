@@ -17,9 +17,12 @@ repositories {
     // Paper (API + snapshots)
     maven { url = "https://repo.papermc.io/repository/maven-public/" }
 
-    // OpenCollab: Floodgate/Geyser snapshots + releases (Cumulus is in releases)
+    // OpenCollab: Floodgate/Geyser snapshots + releases
     maven { url = "https://repo.opencollab.dev/maven-releases/" }
     maven { url = "https://repo.opencollab.dev/maven-snapshots/" }
+
+    // EngineHub: WorldEdit / WorldGuard
+    maven { url = "https://maven.enginehub.org/repo/" }
 }
 
 dependencies {
@@ -28,6 +31,10 @@ dependencies {
 
     // Optional integration (compileOnly)
     compileOnly "org.geysermc.floodgate:api:2.2.4-SNAPSHOT"
+
+    // WorldEdit / WorldGuard APIs (compileOnly)
+    compileOnly "com.sk89q.worldedit:worldedit-bukkit:7.3.17"
+    compileOnly "com.sk89q.worldguard:worldguard-bukkit:7.0.15-beta-1"
 }
 
 tasks.withType(JavaCompile).configureEach {
