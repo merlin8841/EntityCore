@@ -18,6 +18,8 @@ public final class QuestTriggerEngine {
     }
 
     public void handleMove(Player player, Location to) {
+        if (player == null || to == null || to.getWorld() == null) return;
+
         Set<String> prev = insideAreas.computeIfAbsent(player.getUniqueId(), k -> new HashSet<>());
         Set<String> now = new HashSet<>();
 
