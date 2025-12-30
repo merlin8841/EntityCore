@@ -5,7 +5,7 @@ api-version: "1.21"
 authors: [Kris]
 description: Modular base plugin for EntityCore
 
-softdepend: [WorldGuard]
+softdepend: [WorldEdit, WorldGuard]
 
 commands:
   hf:
@@ -28,6 +28,16 @@ commands:
     description: Opens Infection operator GUI (and seed controls)
     usage: /infect
     aliases: [infection]
+
+  qb:
+    description: Gives the Quest Builder tool (Operator only)
+    usage: /qb
+    aliases: [questbuilder, quest-builder]
+
+  entitycore-qb-trigger:
+    description: Internal QuestBuilder trigger hook (do not use)
+    usage: /entitycore-qb-trigger
+    permission: entitycore.questbuilder.operator
 
 permissions:
   entitycore.hopperfilters.use:
@@ -61,4 +71,9 @@ permissions:
     default: false
   entitycore.flyingallowed.bypass:
     description: Operator-only bypass for all FlyingAllowed checks (ignores DENY and requirements)
+    default: op
+
+  # QuestBuilder (Operator-only)
+  entitycore.questbuilder.operator:
+    description: Operator-only Quest Builder tool, triggers and menus
     default: op
