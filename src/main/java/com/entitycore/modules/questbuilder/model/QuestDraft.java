@@ -117,14 +117,27 @@ public final class QuestDraft {
             return;
         }
 
-        BlockData glow = safeBlockData(Material.GLOWSTONE);
+        // Always-available border base
+        BlockData glow = safeBlockData(resolveMaterial(
+                "GLOWSTONE",
+                "SEA_LANTERN",
+                "SHROOMLIGHT",
+                "REDSTONE_LAMP"
+        ));
         if (glow == null) {
-            player.sendMessage("§cPreview border unavailable (GLOWSTONE missing?)");
+            player.sendMessage("§cPreview border unavailable (no suitable light block found).");
             return;
         }
 
-        BlockData frog = safeBlockData(Material.ORANGE_FROGLIGHT);
-        if (frog == null) frog = glow; // fallback for older versions
+        // “Orange frog light” is version-dependent; pick best match if available.
+        // Modern names are OCHRE/VERDANT/PEARLESCENT.
+        BlockData helper = safeBlockData(resolveMaterial(
+                "ORANGE_FROGLIGHT",   // in case your API has it (some forks/versions)
+                "OCHRE_FROGLIGHT",
+                "VERDANT_FROGLIGHT",
+                "PEARLESCENT_FROGLIGHT"
+        ));
+        if (helper == null) helper = glow; // hard fallback
 
         Set<Location> spoofed = new HashSet<>();
 
@@ -135,7 +148,7 @@ public final class QuestDraft {
         spoof(player, new Location(world, maxX, y, maxZ), glow, spoofed);
 
         // Corner helpers (adjacent edge markers)
-        addCornerHelpers(player, minX, maxX, minZ, maxZ, y, frog, spoofed);
+        addCornerHelpers(player, minX, maxX, minZ, maxZ, y, helper, spoofed);
 
         // Edge breadcrumbs every N blocks
         for (int x = minX; x <= maxX; x++) {
@@ -197,7 +210,18 @@ public final class QuestDraft {
         }
     }
 
+    private static Material resolveMaterial(String... names) {
+        if (names == null) return null;
+        for (String n : names) {
+            if (n == null || n.isBlank()) continue;
+            Material m = Material.matchMaterial(n.trim().toUpperCase());
+            if (m != null) return m;
+        }
+        return null;
+    }
+
     private static BlockData safeBlockData(Material mat) {
+        if (mat == null) return null;
         try {
             return mat.createBlockData();
         } catch (Exception e) {
