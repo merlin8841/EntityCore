@@ -11,9 +11,18 @@ public final class QuestBuilderKeys {
     public static NamespacedKey MODE;
     public static NamespacedKey DRAFT;
 
+    // AREA_SET alternation: 1 or 2
+    public static NamespacedKey AREA_NEXT;
+
+    // Preview border toggle: 1 = on, 0 = off
+    public static NamespacedKey PREVIEW_BORDER;
+
     public static void init(JavaPlugin plugin) {
         TOOL = new NamespacedKey(plugin, "qb_tool");
         MODE = new NamespacedKey(plugin, "qb_mode");
         DRAFT = new NamespacedKey(plugin, "qb_draft");
+
+        AREA_NEXT = new NamespacedKey(plugin, "qb_area_next");
+        PREVIEW_BORDER = new NamespacedKey(plugin, "qb_preview_border");
     }
 }
