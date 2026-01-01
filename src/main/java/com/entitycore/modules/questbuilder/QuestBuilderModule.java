@@ -3,6 +3,7 @@ package com.entitycore.modules.questbuilder;
 import com.entitycore.module.Module;
 import com.entitycore.modules.questbuilder.command.QuestBuilderCommand;
 import com.entitycore.modules.questbuilder.command.QuestTriggerCommand;
+import com.entitycore.modules.questbuilder.editor.QuestBuilderEditorListener;
 import com.entitycore.modules.questbuilder.listener.QuestBuilderListener;
 import com.entitycore.modules.questbuilder.listener.QuestInteractTriggerListener;
 import com.entitycore.modules.questbuilder.listener.QuestTriggerListener;
@@ -36,11 +37,12 @@ public final class QuestBuilderModule implements Module {
         plugin.getCommand("entitycore-qb-trigger").setExecutor(new QuestTriggerCommand(storage, scripts));
 
         // Listeners
-        Bukkit.getPluginManager().registerEvents(new QuestBuilderListener(plugin, storage), plugin);
+        Bukkit.getPluginManager().registerEvents(new QuestBuilderListener(plugin, storage, scripts), plugin);
         Bukkit.getPluginManager().registerEvents(new QuestTriggerListener(triggerEngine), plugin);
-
-        // NEW: interaction triggers (buttons / levers / plates / tripwire)
         Bukkit.getPluginManager().registerEvents(new QuestInteractTriggerListener(storage, scripts), plugin);
+
+        // Popup editor listener
+        Bukkit.getPluginManager().registerEvents(new QuestBuilderEditorListener(scripts), plugin);
 
         plugin.getLogger().info("[QuestBuilder] Enabled.");
     }
