@@ -72,11 +72,34 @@ public final class QuestScriptRegistry {
         }
     }
 
+    public void reload() {
+        cfg = YamlConfiguration.loadConfiguration(file);
+    }
+
     public List<String> getActionsForAreaTrigger(String areaId, QuestTriggerType type) {
         if (areaId == null || type == null) return List.of();
         String path = "areas." + areaId + "." + type.name() + ".actions";
         List<String> list = cfg.getStringList(path);
         return list == null ? List.of() : list;
+    }
+
+    // NEW: used by popup editor
+    public void setActionsForAreaTrigger(String areaId, QuestTriggerType type, List<String> actions) {
+        if (areaId == null || areaId.isBlank() || type == null) return;
+
+        String path = "areas." + areaId + "." + type.name() + ".actions";
+
+        List<String> cleaned = new ArrayList<>();
+        if (actions != null) {
+            for (String s : actions) {
+                if (s == null) continue;
+                String t = s.trim();
+                if (!t.isEmpty()) cleaned.add(t);
+            }
+        }
+
+        cfg.set(path, cleaned);
+        save();
     }
 
     public List<InteractionTrigger> getInteractionTriggers() {
@@ -108,10 +131,6 @@ public final class QuestScriptRegistry {
             out.add(new InteractionTrigger(key, type, mat, requireArea, actions));
         }
         return out;
-    }
-
-    public void reload() {
-        cfg = YamlConfiguration.loadConfiguration(file);
     }
 
     public static final class InteractionTrigger {
