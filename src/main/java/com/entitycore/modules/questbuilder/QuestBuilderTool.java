@@ -19,11 +19,12 @@ public final class QuestBuilderTool {
         meta.setDisplayName("§b§lQuest Builder");
         meta.setLore(List.of(
                 "§7Operator tool",
-                "§7Right-click: use mode",
-                "§7Sneak + Right-click: cycle mode",
-                "§7AREA_SET: alternates pos1/pos2",
-                "§7PREVIEW: left-click toggles border",
-                "§7EDITOR: opens popup editor",
+                "§7Use: perform mode action",
+                "§7Sneak + Use: cycle mode",
+                "§7AREA_SET: pos1 → pos2, then resize corners",
+                "§7PREVIEW: shows painted border + particles",
+                "§7EDITOR: opens editor",
+                "§7DELETE: clears area / removes last point",
                 "§7Mode stored via PDC"
         ));
 
@@ -31,11 +32,9 @@ public final class QuestBuilderTool {
         meta.getPersistentDataContainer().set(QuestBuilderKeys.MODE, PersistentDataType.STRING, QuestBuilderMode.POINT.name());
         meta.getPersistentDataContainer().set(QuestBuilderKeys.DRAFT, PersistentDataType.STRING, "default");
 
-        // AREA_SET starts at pos1
         meta.getPersistentDataContainer().set(QuestBuilderKeys.AREA_NEXT, PersistentDataType.INTEGER, 1);
-
-        // Preview border ON by default
         meta.getPersistentDataContainer().set(QuestBuilderKeys.PREVIEW_BORDER, PersistentDataType.BYTE, (byte) 1);
+        meta.getPersistentDataContainer().set(QuestBuilderKeys.AREA_CORNER, PersistentDataType.INTEGER, 0);
 
         stick.setItemMeta(meta);
         return stick;
