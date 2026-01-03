@@ -1,6 +1,7 @@
 package com.entitycore.modules.questbuilder.action;
 
 import org.bukkit.Bukkit;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
 import java.util.List;
@@ -19,31 +20,47 @@ public final class QuestActionExecutor {
      * - {player}
      */
     public static void execute(Player player, List<String> actions) {
+        if (player == null || actions == null || actions.isEmpty()) return;
+
+        CommandSender console = Bukkit.getConsoleSender();
+
         for (String raw : actions) {
-            if (raw == null || raw.isBlank()) continue;
+            if (raw == null) continue;
 
             String line = raw.replace("{player}", player.getName()).trim();
+            if (line.isEmpty()) continue;
 
             if (line.startsWith("player:")) {
-                player.performCommand(line.substring("player:".length()).trim());
+                String cmd = normalizeCommand(line.substring("player:".length()));
+                if (!cmd.isEmpty()) player.performCommand(cmd);
                 continue;
             }
 
             if (line.startsWith("console:")) {
-                Bukkit.dispatchCommand(Bukkit.getConsoleSender(), line.substring("console:".length()).trim());
+                String cmd = normalizeCommand(line.substring("console:".length()));
+                if (!cmd.isEmpty()) Bukkit.dispatchCommand(console, cmd);
                 continue;
             }
 
             if (line.startsWith("bq:")) {
                 String eventId = line.substring("bq:".length()).trim();
                 if (!eventId.isEmpty()) {
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), "q event " + player.getName() + " " + eventId);
+                    // BetonQuest 2.2.1 supports /q event <player> <eventId> (as you’re using)
+                    Bukkit.dispatchCommand(console, "q event " + player.getName() + " " + eventId);
                 }
                 continue;
             }
 
             // Default: console command
-            Bukkit.dispatchCommand(Bukkit.getConsoleSender(), line);
+            String cmd = normalizeCommand(line);
+            if (!cmd.isEmpty()) Bukkit.dispatchCommand(console, cmd);
         }
+    }
+
+    private static String normalizeCommand(String s) {
+        if (s == null) return "";
+        String t = s.trim();
+        while (t.startsWith("/")) t = t.substring(1).trim();
+        return t;
     }
 }
