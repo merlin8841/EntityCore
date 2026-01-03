@@ -38,28 +38,12 @@ public final class QuestScriptRegistry {
     }
 
     private void writeDefaultFile() {
-        // Area triggers (enter/exit)
         cfg.set("areas.default.ENTER_AREA.actions", List.of(
                 "player:say §aEntered default area!",
                 "console:say {player} entered area default"
         ));
         cfg.set("areas.default.EXIT_AREA.actions", List.of(
                 "player:say §cLeft default area!"
-        ));
-
-        // Interaction triggers (global)
-        cfg.set("interactions.example_button.type", "RIGHT_CLICK_BLOCK");
-        cfg.set("interactions.example_button.block", "STONE_BUTTON");
-        cfg.set("interactions.example_button.requireArea", "default");
-        cfg.set("interactions.example_button.actions", List.of(
-                "player:say §bPressed a button inside default area!",
-                "bq:some_betonquest_event_id"
-        ));
-
-        cfg.set("interactions.example_plate.type", "PHYSICAL_TRIGGER");
-        cfg.set("interactions.example_plate.block", "STONE_PRESSURE_PLATE");
-        cfg.set("interactions.example_plate.actions", List.of(
-                "player:say §eStepped on a plate!"
         ));
     }
 
@@ -83,25 +67,52 @@ public final class QuestScriptRegistry {
         return list == null ? List.of() : list;
     }
 
-    // NEW: used by popup editor
     public void setActionsForAreaTrigger(String areaId, QuestTriggerType type, List<String> actions) {
         if (areaId == null || areaId.isBlank() || type == null) return;
-
         String path = "areas." + areaId + "." + type.name() + ".actions";
 
-        List<String> cleaned = new ArrayList<>();
-        if (actions != null) {
-            for (String s : actions) {
-                if (s == null) continue;
-                String t = s.trim();
-                if (!t.isEmpty()) cleaned.add(t);
-            }
-        }
-
+        List<String> cleaned = cleanAndDedupe(actions);
         cfg.set(path, cleaned);
         save();
     }
 
+    public void appendActionsForAreaTrigger(String areaId, QuestTriggerType type, List<String> actionsToAdd) {
+        if (areaId == null || areaId.isBlank() || type == null) return;
+        String path = "areas." + areaId + "." + type.name() + ".actions";
+
+        List<String> cur = cfg.getStringList(path);
+        if (cur == null) cur = new ArrayList<>();
+
+        List<String> merged = new ArrayList<>(cur);
+        merged.addAll(actionsToAdd == null ? List.of() : actionsToAdd);
+
+        cfg.set(path, cleanAndDedupe(merged));
+        save();
+    }
+
+    private static List<String> cleanAndDedupe(List<String> in) {
+        LinkedHashSet<String> set = new LinkedHashSet<>();
+        if (in != null) {
+            for (String s : in) {
+                if (s == null) continue;
+                String t = normalizeLine(s);
+                if (!t.isEmpty()) set.add(t);
+            }
+        }
+        return new ArrayList<>(set);
+    }
+
+    private static String normalizeLine(String s) {
+        String t = s.trim();
+        if (t.startsWith("console:/")) t = "console:" + t.substring("console:/".length()).trim();
+        if (t.startsWith("player:/")) t = "player:" + t.substring("player:/".length()).trim();
+        if (t.startsWith("/")) t = t.substring(1).trim();
+        // collapse double spaces
+        while (t.contains("  ")) t = t.replace("  ", " ");
+        return t;
+    }
+
+    // kept for your runtime trigger listener, even if you aren’t using it heavily yet
     public List<InteractionTrigger> getInteractionTriggers() {
         ConfigurationSection sec = cfg.getConfigurationSection("interactions");
         if (sec == null) return List.of();
