@@ -14,8 +14,11 @@ public final class QuestBuilderKeys {
     // AREA_SET alternation: 1 or 2
     public static NamespacedKey AREA_NEXT;
 
-    // Preview border toggle: 1 = on, 0 = off
+    // Preview border toggle: 1 = on, 0 = off (kept for future menu toggles)
     public static NamespacedKey PREVIEW_BORDER;
+
+    // Resizing: selected corner (0 none, 1..4)
+    public static NamespacedKey AREA_CORNER;
 
     public static void init(JavaPlugin plugin) {
         TOOL = new NamespacedKey(plugin, "qb_tool");
@@ -24,5 +27,6 @@ public final class QuestBuilderKeys {
 
         AREA_NEXT = new NamespacedKey(plugin, "qb_area_next");
         PREVIEW_BORDER = new NamespacedKey(plugin, "qb_preview_border");
+        AREA_CORNER = new NamespacedKey(plugin, "qb_area_corner");
     }
 }
