@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class QuestBuilderEditorListener implements Listener {
 
     private final QuestScriptRegistry scripts;
-
     private final Map<UUID, PendingEdit> pending = new ConcurrentHashMap<>();
 
     public QuestBuilderEditorListener(QuestScriptRegistry scripts) {
@@ -59,8 +58,10 @@ public final class QuestBuilderEditorListener implements Listener {
         pending.put(player.getUniqueId(), new PendingEdit(areaId, type));
 
         player.sendMessage(ChatColor.AQUA + "Editing actions for area '" + areaId + "' trigger " + type.name());
-        player.sendMessage(ChatColor.GRAY + "Type action lines separated by ' | ' (pipe). Example:");
-        player.sendMessage(ChatColor.DARK_GRAY + "player:say hi | console:say {player} entered | bq:some_event_id");
+        player.sendMessage(ChatColor.GRAY + "Paste action lines separated by ' | ' (pipe).");
+        player.sendMessage(ChatColor.GRAY + "This will " + ChatColor.GREEN + "APPEND" + ChatColor.GRAY + " (deduped) by default.");
+        player.sendMessage(ChatColor.DARK_GRAY + "Example: player:say hi | console:say {player} entered | bq:some_event_id");
+        player.sendMessage(ChatColor.GRAY + "Use " + ChatColor.YELLOW + "set:" + ChatColor.GRAY + " prefix to replace instead.");
         player.sendMessage(ChatColor.GRAY + "Type " + ChatColor.RED + "cancel" + ChatColor.GRAY + " to abort.");
     }
 
@@ -79,17 +80,29 @@ public final class QuestBuilderEditorListener implements Listener {
             return;
         }
 
+        boolean replace = false;
+        if (msg.toLowerCase(Locale.ROOT).startsWith("set:")) {
+            replace = true;
+            msg = msg.substring("set:".length()).trim();
+        }
+
         List<String> actions = new ArrayList<>();
         for (String part : msg.split("\\|")) {
             String line = part.trim();
             if (!line.isEmpty()) actions.add(line);
         }
 
-        scripts.setActionsForAreaTrigger(edit.areaId, edit.type, actions);
-        pending.remove(player.getUniqueId());
+        if (replace) {
+            scripts.setActionsForAreaTrigger(edit.areaId, edit.type, actions);
+            player.sendMessage(ChatColor.GREEN + "Replaced actions with " + actions.size() + " line(s) for "
+                    + edit.type.name() + " in area '" + edit.areaId + "'.");
+        } else {
+            scripts.appendActionsForAreaTrigger(edit.areaId, edit.type, actions);
+            int total = scripts.getActionsForAreaTrigger(edit.areaId, edit.type).size();
+            player.sendMessage(ChatColor.GREEN + "Added " + actions.size() + " line(s) (deduped). Total now: " + total);
+        }
 
-        player.sendMessage(ChatColor.GREEN + "Saved " + actions.size() + " action line(s) for " + edit.type.name()
-                + " in area '" + edit.areaId + "'.");
+        pending.remove(player.getUniqueId());
     }
 
     private static final class PendingEdit {
