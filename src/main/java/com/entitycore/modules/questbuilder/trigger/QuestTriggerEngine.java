@@ -40,6 +40,21 @@ public final class QuestTriggerEngine {
         insideAreas.put(player.getUniqueId(), now);
     }
 
+    /**
+     * Call when player changes world / teleports / quits, so EXIT fires for any areas they were inside.
+     */
+    public void handleHardLocationChange(Player player) {
+        if (player == null) return;
+
+        Set<String> prev = insideAreas.remove(player.getUniqueId());
+        if (prev == null || prev.isEmpty()) return;
+
+        // Fire EXIT for all areas we believed they were inside
+        for (String areaId : prev) {
+            fire(player, areaId, QuestTriggerType.EXIT_AREA);
+        }
+    }
+
     private void fire(Player player, String areaId, QuestTriggerType type) {
         Bukkit.dispatchCommand(
                 Bukkit.getConsoleSender(),
