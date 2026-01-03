@@ -3,19 +3,18 @@ package com.entitycore.modules.questbuilder;
 public enum QuestBuilderMode {
     POINT,
 
-    // New: WorldEdit-style alternating selection
+    // WorldEdit-style alternating selection + resize
     AREA_SET,
-
-    // Legacy/manual (kept for compatibility; not used in normal cycling)
-    AREA_POS1,
-    AREA_POS2,
 
     INFO,
     PREVIEW,
     IMPORT_WORLD_EDIT,
 
-    // New: popup editor
-    EDITOR;
+    // Chat/Popup editor
+    EDITOR,
+
+    // Bedrock-friendly delete mode (no left-click needed)
+    DELETE;
 
     public static QuestBuilderMode from(String s) {
         if (s == null) return POINT;
@@ -26,9 +25,6 @@ public enum QuestBuilderMode {
         }
     }
 
-    /**
-     * Intentionally omits AREA_POS1/AREA_POS2 from the normal cycle.
-     */
     public QuestBuilderMode next() {
         return switch (this) {
             case POINT -> AREA_SET;
@@ -36,9 +32,8 @@ public enum QuestBuilderMode {
             case INFO -> PREVIEW;
             case PREVIEW -> IMPORT_WORLD_EDIT;
             case IMPORT_WORLD_EDIT -> EDITOR;
-            case EDITOR -> POINT;
-
-            case AREA_POS1, AREA_POS2 -> INFO;
+            case EDITOR -> DELETE;
+            case DELETE -> POINT;
         };
     }
 }
