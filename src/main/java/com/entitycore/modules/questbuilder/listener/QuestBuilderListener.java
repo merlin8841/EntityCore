@@ -52,7 +52,7 @@ public final class QuestBuilderListener implements Listener {
                 pdc.get(QuestBuilderKeys.MODE, PersistentDataType.STRING)
         );
 
-        // Sneak-right-click cycles mode
+        // Sneak + interact cycles mode (Bedrock-friendly: no reliance on left click)
         if (event.getPlayer().isSneaking()) {
             QuestBuilderMode next = mode.next();
             pdc.set(QuestBuilderKeys.MODE, PersistentDataType.STRING, next.name());
@@ -67,7 +67,7 @@ public final class QuestBuilderListener implements Listener {
             return;
         }
 
-        // PREVIEW toggle (left-click): border on/off
+        // PREVIEW toggle (left-click) - keep for Java convenience, but not required for Bedrock
         if (mode == QuestBuilderMode.PREVIEW
                 && (event.getAction() == Action.LEFT_CLICK_AIR || event.getAction() == Action.LEFT_CLICK_BLOCK)) {
 
@@ -92,16 +92,6 @@ public final class QuestBuilderListener implements Listener {
             }
 
             case AREA_SET -> handleAreaSet(event, item, draft, meta, pdc);
-
-            // Legacy/manual
-            case AREA_POS1 -> {
-                draft.setPos1(loc);
-                event.getPlayer().sendMessage(ChatColor.GREEN + "Area pos1 set.");
-            }
-            case AREA_POS2 -> {
-                draft.setPos2(loc);
-                event.getPlayer().sendMessage(ChatColor.GREEN + "Area pos2 set.");
-            }
 
             case INFO -> sendInfo(event, draftId, draft);
 
@@ -158,6 +148,7 @@ public final class QuestBuilderListener implements Listener {
         event.getPlayer().sendMessage(ChatColor.AQUA + "Draft: " + draftId);
         event.getPlayer().sendMessage("Points: " + draft.points.size());
         event.getPlayer().sendMessage("Area complete: " + draft.isAreaComplete());
+
         if (draft.isAreaComplete()) {
             int minX = Math.min(draft.pos1.getBlockX(), draft.pos2.getBlockX());
             int minY = Math.min(draft.pos1.getBlockY(), draft.pos2.getBlockY());
@@ -167,6 +158,7 @@ public final class QuestBuilderListener implements Listener {
             int maxZ = Math.max(draft.pos1.getBlockZ(), draft.pos2.getBlockZ());
             event.getPlayer().sendMessage("Bounds: (" + minX + "," + minY + "," + minZ + ") -> (" + maxX + "," + maxY + "," + maxZ + ")");
         }
+
         event.getPlayer().sendMessage("Mirror WG: " + draft.mirrorWorldGuard);
     }
 }
